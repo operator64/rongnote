@@ -11,7 +11,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---- Rust build ----
-FROM rust:1.83-slim-bookworm AS server-builder
+FROM rust:1.91-slim-bookworm AS server-builder
 WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates && rm -rf /var/lib/apt/lists/*
 
