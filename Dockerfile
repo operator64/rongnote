@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     useradd -u 10001 -r -s /usr/sbin/nologin notes && \
     mkdir -p /data && chown notes:notes /data
 WORKDIR /app
-COPY --from=server-builder /src/server/target/release/rongnote-server /usr/local/bin/rongnote-server
+COPY --from=server-builder /src/target/release/rongnote-server /usr/local/bin/rongnote-server
 USER notes
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/rongnote-server"]
