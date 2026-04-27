@@ -1,8 +1,114 @@
 # Deploy notes
 
-Production deploy lives at `notes.ronglab.de`. Compose snippet for
-`/opt/ronglab/docker-compose.yml` is in [README.md](README.md#layout) and the
-build prompt; this file is for the bits that aren't in the app itself.
+Production deploy lives at `notes.ronglab.de`. Image is built by the
+`build-image` workflow and pushed to
+`ghcr.io/operator64/rongnote-server:latest` on every push to `main`.
+
+## Initial deploy on the ronglab VM
+
+Assumes the existing ronglab compose stack at `/opt/ronglab/docker-compose.yml`
+already runs Traefik on the `ronglab` network with TLS via Cloudflare.
+
+1. **Pull access for ghcr.io.** The package starts private. Either flip it
+   to public on GitHub (Settings → Packages → rongnote-server → Change
+   visibility), or log the VM into ghcr:
+
+   ```bash
+   echo "$GHCR_PAT" | docker login ghcr.io -u operator64 --password-stdin
+   ```
+
+   `GHCR_PAT` is a personal-access-token with `read:packages`. A public
+   image avoids this entirely.
+
+2. **Add the env file** at `/opt/ronglab/.env` (create or append):
+
+   ```ini
+   NOTES_DB_PW=<random-32-chars>
+   NOTES_PUBLIC_URL=https://notes.ronglab.de
+   ```
+
+3. **Append to the compose file** at `/opt/ronglab/docker-compose.yml`:
+
+   ```yaml
+   notes:
+     image: ghcr.io/operator64/rongnote-server:latest
+     container_name: notes
+     restart: unless-stopped
+     networks: [ronglab]
+     environment:
+       DATABASE_URL: postgres://notes:${NOTES_DB_PW}@notes-db:5432/notes
+       DATA_DIR: /data
+       PUBLIC_URL: ${NOTES_PUBLIC_URL}
+       BIND_ADDR: 0.0.0.0:8080
+       APP_ENV: production
+       SESSION_TTL: 30d
+       RUST_LOG: info,tower_http=info,sqlx=warn
+     volumes:
+       - notes-data:/data
+     labels:
+       - traefik.enable=true
+       - traefik.http.routers.notes.rule=Host(`notes.ronglab.de`)
+       - traefik.http.routers.notes.entrypoints=web
+       - traefik.http.services.notes.loadbalancer.server.port=8080
+     depends_on:
+       notes-db:
+         condition: service_healthy
+
+   notes-db:
+     image: postgres:16-alpine
+     container_name: notes-db
+     restart: unless-stopped
+     networks: [ronglab]
+     environment:
+       POSTGRES_USER: notes
+       POSTGRES_PASSWORD: ${NOTES_DB_PW}
+       POSTGRES_DB: notes
+     volumes:
+       - notes-db-data:/var/lib/postgresql/data
+     healthcheck:
+       test: ["CMD-SHELL", "pg_isready -U notes -d notes"]
+       interval: 5s
+       timeout: 3s
+       retries: 10
+   ```
+
+   And under the top-level `volumes:`:
+
+   ```yaml
+   notes-data:
+   notes-db-data:
+   ```
+
+4. **Bring it up.** Migrations run automatically on first start.
+
+   ```bash
+   cd /opt/ronglab
+   docker compose pull notes
+   docker compose up -d notes-db notes
+   docker compose logs -f notes   # watch for "starting rongnote-server"
+   ```
+
+5. **Verify.** From the VM:
+   ```bash
+   curl -fsS http://localhost:8080/healthz   # → ok
+   ```
+   From your browser:
+   ```
+   https://notes.ronglab.de/healthz          → ok
+   ```
+
+## Updating
+
+```bash
+cd /opt/ronglab
+docker compose pull notes
+docker compose up -d notes
+```
+
+The image rolls forward; migrations apply at startup. Database volume
+(`notes-db-data`) and blob volume (`notes-data`) survive restarts.
+
+## Encrypted backup (per-user export)
 
 ## Backups
 
