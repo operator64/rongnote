@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / SvelteKit
+node_modules/
+/web/.svelte-kit/
+/web/build/
+/web/.env
+/web/.env.*
+!/web/.env.example
+
+# Local env / data
+/.env
+/.env.local
+/data/
+/backups/
+
+# Editors / agent state
+.vscode/
+.idea/
+.claude/
+*.swp
+.DS_Store
+
+# Embedded frontend (built by web, consumed by server)
+/server/static/*
+!/server/static/.gitkeep
+
+# Per-developer cargo config (Windows OpenSSL paths etc.). See
+# .cargo/config.example.toml for what to put here on a Windows dev box.
+/.cargo/config.toml

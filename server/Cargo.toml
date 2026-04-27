@@ -1,0 +1,51 @@
+[package]
+name = "rongnote-server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rongnote-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["macros", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+hyper = "1"
+
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "time", "macros", "migrate"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+
+argon2 = "0.5"
+rand = "0.8"
+
+cookie = { version = "0.18", features = ["percent-encode"] }
+mime_guess = "2"
+
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+thiserror = "1"
+anyhow = "1"
+
+humantime = "2"
+dotenvy = "0.15"
+base64 = "0.22"
+
+webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation", "preview-features"] }
+url = "2"
+parking_lot = "0.12"
+
+sha2 = "0.10"
+hex = "0.4"
+tokio-util = { version = "0.7", features = ["io"] }
+tar = "0.4"
+

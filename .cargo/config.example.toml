@@ -1,0 +1,14 @@
+# Cargo build environment.
+#
+# OpenSSL paths are needed for openssl-sys (transitive dep of webauthn-rs)
+# on Windows where there's no system package manager. Linux/macOS builds
+# (including the Docker image) pick up the system OpenSSL automatically and
+# ignore these.
+#
+# If you install OpenSSL elsewhere, override here. Adjust paths if the
+# Windows build moves (`winget upgrade ShiningLight.OpenSSL.Dev`).
+
+[env]
+OPENSSL_DIR = "C:\\Program Files\\OpenSSL-Win64"
+OPENSSL_INCLUDE_DIR = "C:\\Program Files\\OpenSSL-Win64\\include"
+OPENSSL_LIB_DIR = "C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MD"

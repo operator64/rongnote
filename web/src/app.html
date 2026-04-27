@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>rongnote</title>
+    <script>
+      // Apply persisted prefs before paint to avoid FOUC. Mirrors the logic
+      // in src/lib/prefs.svelte.ts — keep them in sync.
+      (function () {
+        try {
+          var raw = localStorage.getItem('rongnote.prefs');
+          if (!raw) return;
+          var p = JSON.parse(raw);
+          if (p.theme === 'light' || p.theme === 'dark') {
+            document.documentElement.setAttribute('data-theme', p.theme);
+          }
+          if (typeof p.fontSize === 'number' && p.fontSize >= 11 && p.fontSize <= 20) {
+            document.documentElement.style.setProperty('--base-font-size', p.fontSize + 'px');
+          }
+        } catch (e) {
+          /* ignore */
+        }
+      })();
+    </script>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div id="app">%sveltekit.body%</div>
+  </body>
+</html>
