@@ -220,6 +220,41 @@ of a logged-in user. Defenses:
 - All HTML rendered via `{@html}` is `marked.parse(...)` of *decrypted*
   user-controlled content — same as any other markdown viewer
 
+## Share links
+
+Share-via-link (notes only in v1) keeps the same end-to-end posture even
+though the recipient has no account.
+
+```
+owner client                            server                recipient client
+  ─ generate share_key (random 32 bytes)
+  ─ decrypt note locally
+  ─ ciphertext = secretbox(plaintext, share_key)
+  ── POST /items/<id>/share ──────────►
+       {encrypted_payload, expires_in_days}
+                                          ─ store ciphertext + token + expiry
+                                       ◄── {token, …}
+  ─ build URL = https://host/share/<token>#<base64(share_key)>
+  ─ send URL out-of-band (chat, email, paper)
+
+                                                                     follows URL
+                                                                     ── GET /share/<token> (no auth) ──►
+                                                                     ◄── {encrypted_payload, item_title}
+                                                                     ─ key = atob(location.hash[1:])
+                                                                     ─ plaintext = secretbox_open(payload, key)
+```
+
+The share key never reaches our server because URL fragments aren't sent
+in HTTP requests. Anyone who has the FULL link can read; anyone with only
+the token (e.g. from server logs or DB dump) cannot. Owner can revoke
+(`DELETE /api/v1/shares/:id`) which removes the row from the DB so
+subsequent fetches return 404.
+
+Out of scope (yet): file shares (re-encrypting a multi-MB blob client-side
+needs streaming), passphrase-locked shares (additional KEK around the
+share_key in the URL), audit of share-recipient access (we record creation
+and increment a counter per fetch but don't tie counts to identities).
+
 ## Audit log
 
 Every auth event and every secret read is recorded in `audit_log` per
@@ -228,10 +263,12 @@ the "is the server reading my notes?" anxiety isn't worth the data.
 Recorded actions:
 
 - `auth.register`, `auth.login` (with `method: passphrase|passkey`),
-  `auth.logout`, `auth.passphrase_reset`, `auth.passkey_register`
+  `auth.logout`, `auth.passphrase_reset`, `auth.passkey_register`,
+  `auth.passkey_delete`
 - `item.create`, `item.update`, `item.soft_delete`, `item.hard_delete`,
-  `item.restore`
+  `item.restore`, `item.restore_version`
 - `secret.read`
+- `share.create`
 - `export`
 
 Each user sees their own log at `/items/audit`. Per-user, never anyone

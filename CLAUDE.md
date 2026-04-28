@@ -14,7 +14,7 @@ in production.
 | | |
 |---|---|
 | Server | Rust 1.91 + Axum 0.7 + SQLx 0.8 + Postgres 16 |
-| Frontend | SvelteKit 2 + Svelte 5 (runes) + CodeMirror 6 + Lucide |
+| Frontend | SvelteKit 2 + Svelte 5 (runes) + CodeMirror 6 + Lucide + svelte-dnd-action |
 | Crypto (client) | `libsodium-wrappers-sumo` |
 | Crypto (server) | `argon2` (passphrase hash), `webauthn-rs` 0.5 |
 | File storage | content-addressed sha256 on disk under `$DATA_DIR/blobs/` |
@@ -32,13 +32,15 @@ in production.
 │   └── src/
 │       ├── main.rs        wiring + AppState
 │       ├── auth.rs        register/precheck/login/logout/recovery/me
-│       ├── passkey.rs     WebAuthn register + discoverable login
-│       ├── items.rs       CRUD for notes/secrets/tasks/files/...
+│       ├── passkey.rs     WebAuthn register + discoverable login + list/delete
+│       ├── items.rs       CRUD for notes/secrets/tasks/lists/files/snippets/bookmarks
+│       │                  + version snapshots on body update
+│       ├── shares.rs      /share/<token> public + per-item create/list/revoke
 │       ├── files.rs       blob upload + download
 │       ├── audit.rs       record + list activity
 │       ├── export.rs      tar bundle of all user data
 │       ├── session.rs     cookie + sessions table + AuthUser extractor
-│       ├── b64.rs         serde adapters: base64 + hex
+│       ├── b64.rs         serde adapters: base64 + hex + date_iso (YYYY-MM-DD)
 │       ├── error.rs       AppError → IntoResponse
 │       ├── config.rs      env var parsing
 │       └── static_assets.rs   rust-embed of ../web/build
@@ -59,7 +61,10 @@ in production.
 │           ├── items.svelte.ts    items list + filters + tag/path catalogs
 │           ├── totp.ts            RFC 6238 via Web Crypto
 │           ├── password.ts        random PW generator
-│           ├── *Editor.svelte     one per item type (Note, Secret, Task, File)
+│           ├── *Editor.svelte     one per type: Note, Secret, Task, List,
+│           │                       Snippet, Bookmark, File
+│           ├── PasswordGenerator.svelte  inline popover in SecretEditor
+│           ├── hibp.ts            k-anonymity SHA-1 prefix query
 │           ├── ItemIcon.svelte    Lucide-icon-by-type
 │           ├── TaskCheckbox.svelte themed checkbox (Square/SquareCheckBig)
 │           ├── Sidebar.svelte
@@ -119,12 +124,22 @@ at startup, transactional, idempotent. **Never** roll back — to undo, write
 a new forward migration. Production migrations are destructive in some
 historical cases:
 
-- 0002 nuked v0.1 plaintext bodies (TRUNCATE) — pre-1.0 only
-- 0003 nuked v0.2 users (incompatible auth flow) — pre-1.0 only
-- 0004 onward are non-destructive
+- 0001 — initial schema
+- 0002 — e2e crypto (TRUNCATE'd v0.1 data) — pre-1.0 only
+- 0003 — recovery code refactor (TRUNCATE'd v0.2 data) — pre-1.0 only
+- 0004 — trash (`items.deleted_at`)
+- 0005 — passkeys table
+- 0006 — files (`files_blobs` + `items.blob_sha256`)
+- 0007 — tasks (`items.due_at`, `items.done`)
+- 0008 — audit log
+- 0009 — pinned (`items.pinned`)
+- 0010 — share_links table
+- 0011 — item_versions table
+- 0012 — extend `items.type` CHECK to include `'list'`
 
 Going forward, never TRUNCATE in a migration. Add columns, backfill,
-deprecate.
+deprecate. **Use `--` for SQL comments**, not Rust-style `///` — the latter
+fails parsing.
 
 ## Conventions
 
@@ -167,8 +182,9 @@ These have all bit me. Don't repeat:
    not `/notes/`. Frontend must call `/api/v1/items`, never `/api/v1/items/`.
 2. **`time::OffsetDateTime` and `time::Date` default serde format isn't
    ISO 8601.** Without `#[serde(with = "time::serde::rfc3339")]` you get
-   numeric tuples. For `Date`, use a custom format (`[year]-[month]-[day]`)
-   since `Iso8601::DEFAULT` requires both date + time components.
+   numeric tuples. For `Date`, use `crate::b64::date_iso_option`
+   (custom `[year]-[month]-[day]` format) — `Iso8601::DEFAULT` requires both
+   date + time components and won't compile with `Date`.
 3. **`libsodium-wrappers-sumo` ESM has a broken relative import.** The
    `vite.config.ts` plugin `fix-libsodium-relative-import` rewrites
    `./libsodium-sumo.mjs` to the sibling `libsodium-sumo` package. Don't
@@ -189,9 +205,32 @@ These have all bit me. Don't repeat:
    users off `/register`. Hold the user view in `pendingUser` and only
    call `session.setUser` when the user clicks "continue".
 9. **`/recovery` must be in `ALWAYS_ALLOW_ROUTES`.** Otherwise logged-in
-   users testing the recovery flow get redirected to `/items`.
+   users testing the recovery flow get redirected to `/items`. `/share/*`
+   is also auth-bypass via `isPublicPrefix(path)`.
 10. **Vite dev server doesn't restart on `vite.config.ts` changes.** Kill
     + restart manually after editing the config.
+11. **Editor "sync from store" effects can clobber unsaved local edits.**
+    The TaskEditor's effect that copies `items.list` summary back into
+    local state used to fire on every local change (`dueAt` was both read
+    and written) and reverted to the stale store value. Gate the sync on
+    `!saving && !dirty` so it only runs when the user is idle.
+12. **HTML `<input type="date">` shows the OS placeholder ("TT.MM.JJJJ"
+    in DE locale) when value is the empty string.** It always commits
+    YYYY-MM-DD to the bound `$state` on commit, regardless of locale.
+    Don't try to localize.
+13. **PostgreSQL CHECK constraints can't be `ALTER`-ed in place.** To
+    extend an enum-style CHECK (e.g. add `'list'` to `items.type`), drop
+    + recreate it. See `0012_list_type.sql`.
+14. **SQL comments must use `--`, not `///`.** sqlx's migrator passes the
+    raw SQL to Postgres; `///` is a Rust thing and fails to parse.
+15. **Mobile sidebar drawer:** the `items/+layout.svelte` wraps the
+    `<Sidebar>` in a `.sidebar-wrap` that becomes `position: fixed` at
+    `<700px`. The `drawerOpen` state is reset on every filter or
+    navigation change via a `$effect` so taps in the drawer auto-close it.
+16. **Cmd-K palette can be opened programmatically** by dispatching a
+    synthetic `KeyboardEvent('keydown', { key: 'k', ctrlKey: true })` on
+    `window` — the search button in the mobile pane head does exactly
+    this since touch users don't have a keyboard.
 
 ## Build + push image (CI)
 
