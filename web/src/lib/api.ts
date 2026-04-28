@@ -8,7 +8,8 @@ export type ItemType =
   | 'event'
   | 'task'
   | 'snippet'
-  | 'bookmark';
+  | 'bookmark'
+  | 'list';
 
 export interface UserView {
   id: string;

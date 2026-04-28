@@ -62,7 +62,8 @@
       secret: 'New secret',
       task: 'New task',
       snippet: 'New snippet',
-      bookmark: 'New bookmark'
+      bookmark: 'New bookmark',
+      list: 'New list'
     };
     const item = await api.createItem({
       title: titleByType[type] ?? 'Untitled',

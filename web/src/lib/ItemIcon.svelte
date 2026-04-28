@@ -6,6 +6,7 @@
     File,
     FileText,
     Key,
+    ListChecks,
     ListTodo
   } from '@lucide/svelte';
   import type { ItemType } from '$lib/api';
@@ -20,7 +21,8 @@
     file: File,
     snippet: Code,
     bookmark: Bookmark,
-    event: Calendar
+    event: Calendar,
+    list: ListChecks
   } as const;
 
   let Component = $derived(map[type] ?? FileText);

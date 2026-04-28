@@ -62,6 +62,16 @@
     },
     {
       kind: 'action',
+      label: 'new list',
+      hint: 'create',
+      run: async () => {
+        const item = await api.createItem({ title: 'New list', type: 'list' });
+        items.upsert(item);
+        await goto(`/items/${item.id}`);
+      }
+    },
+    {
+      kind: 'action',
       label: 'new secret',
       hint: 'create',
       run: async () => {

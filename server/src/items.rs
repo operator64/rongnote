@@ -33,7 +33,7 @@ pub fn router() -> Router<Arc<AppState>> {
 // --- Allowed types ---
 
 const ITEM_TYPES: &[&str] = &[
-    "note", "secret", "file", "event", "task", "snippet", "bookmark",
+    "note", "secret", "file", "event", "task", "snippet", "bookmark", "list",
 ];
 
 fn validate_type(t: &str) -> AppResult<()> {

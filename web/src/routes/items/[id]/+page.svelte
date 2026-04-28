@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import BookmarkEditor from '$lib/BookmarkEditor.svelte';
   import FileEditor from '$lib/FileEditor.svelte';
+  import ListEditor from '$lib/ListEditor.svelte';
   import NoteEditor from '$lib/NoteEditor.svelte';
   import SecretEditor from '$lib/SecretEditor.svelte';
   import SnippetEditor from '$lib/SnippetEditor.svelte';
@@ -56,6 +57,8 @@
   <SnippetEditor {item} />
 {:else if item.type === 'bookmark'}
   <BookmarkEditor {item} />
+{:else if item.type === 'list'}
+  <ListEditor {item} />
 {:else}
   <NoteEditor {item} />
 {/if}

@@ -121,6 +121,7 @@ class ItemStore {
     const ALWAYS_SHOW: ItemType[] = [
       'note',
       'task',
+      'list',
       'secret',
       'snippet',
       'bookmark',
@@ -129,10 +130,11 @@ class ItemStore {
     for (const t of ALWAYS_SHOW) if (!counts.has(t)) counts.set(t, 0);
     const order: ItemType[] = [
       'note',
+      'task',
+      'list',
       'secret',
       'snippet',
       'bookmark',
-      'task',
       'event',
       'file'
     ];

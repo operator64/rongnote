@@ -27,6 +27,7 @@
     "@codemirror/view": "^6.34.0",
     "@lucide/svelte": "^1.11.0",
     "libsodium-wrappers-sumo": "^0.7.15",
-    "marked": "^14.1.0"
+    "marked": "^14.1.0",
+    "svelte-dnd-action": "^0.9.69"
   }
 }
