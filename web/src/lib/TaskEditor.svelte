@@ -70,7 +70,12 @@
   /// Sync externally-driven changes (e.g. quick-toggle from the list) back
   /// into the editor's local state. The store's summary is the source of
   /// truth for fields that live outside encrypted_body.
+  ///
+  /// Skip while the user is actively editing — otherwise a $effect-pass
+  /// triggered by the local change reads the still-stale summary and
+  /// reverts the just-picked value.
   $effect(() => {
+    if (saving || dirty) return;
     const summary = items.list.find((n) => n.id === item.id);
     if (!summary) return;
     if (summary.done !== done) done = summary.done;
