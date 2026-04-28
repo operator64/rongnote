@@ -52,7 +52,7 @@ pub struct ItemSummary {
     #[serde(with = "time::serde::rfc3339")]
     updated_at: OffsetDateTime,
     /// Only meaningful for type='task' (date-only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, with = "crate::b64::date_iso_option", skip_serializing_if = "Option::is_none")]
     due_at: Option<time::Date>,
     done: bool,
 }
@@ -83,7 +83,7 @@ pub struct ItemView {
     updated_at: OffsetDateTime,
     #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
     deleted_at: Option<OffsetDateTime>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, with = "crate::b64::date_iso_option", skip_serializing_if = "Option::is_none")]
     due_at: Option<time::Date>,
     #[serde(default)]
     done: bool,
@@ -116,7 +116,7 @@ pub struct CreateItemBody {
     tags: Vec<String>,
     #[serde(default = "default_path")]
     path: String,
-    #[serde(default)]
+    #[serde(default, with = "crate::b64::date_iso_option")]
     due_at: Option<time::Date>,
     #[serde(default)]
     done: bool,
@@ -136,6 +136,7 @@ pub struct UpdateItemBody {
     /// Set this true to apply due_at (including clearing to NULL).
     #[serde(default)]
     update_due_at: bool,
+    #[serde(default, with = "crate::b64::date_iso_option")]
     due_at: Option<time::Date>,
     done: Option<bool>,
 }
