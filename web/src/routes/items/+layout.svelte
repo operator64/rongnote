@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import { Pin } from '@lucide/svelte';
   import CommandPalette from '$lib/CommandPalette.svelte';
   import ItemIcon from '$lib/ItemIcon.svelte';
   import Sidebar from '$lib/Sidebar.svelte';
@@ -33,7 +34,9 @@
     const titleByType: Record<string, string> = {
       note: 'Untitled',
       secret: 'New secret',
-      task: 'New task'
+      task: 'New task',
+      snippet: 'New snippet',
+      bookmark: 'New bookmark'
     };
     const item = await api.createItem({
       title: titleByType[type] ?? 'Untitled',
@@ -218,6 +221,7 @@
             >
               {n.title || '(untitled)'}
             </a>
+            {#if n.pinned}<Pin size={12} class="pinned-mark" />{/if}
             {#if n.due_at}
               <span class={dueClass(n.due_at)}>{fmtDue(n.due_at)}</span>
             {/if}
@@ -233,6 +237,7 @@
             <span class="grow" style="overflow: hidden; text-overflow: ellipsis;">
               {n.title || '(untitled)'}
             </span>
+            {#if n.pinned}<Pin size={12} class="pinned-mark" />{/if}
             <span class="tag">{fmtDate(n.updated_at)}</span>
           </a>
         {/if}
@@ -354,6 +359,10 @@
   }
   .due {
     font-size: 11px;
+    flex-shrink: 0;
+  }
+  :global(.pinned-mark) {
+    color: var(--accent);
     flex-shrink: 0;
   }
   .due.future {

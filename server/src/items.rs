@@ -22,6 +22,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/", get(list).post(create))
         .route("/:id", get(get_one).patch(update).delete(delete_one))
         .route("/:id/restore", axum::routing::post(restore))
+        .route("/:id/versions", get(list_versions))
+        .route("/:id/versions/:version", get(get_version))
+        .route(
+            "/:id/versions/:version/restore",
+            axum::routing::post(restore_version),
+        )
 }
 
 // --- Allowed types ---
@@ -55,6 +61,7 @@ pub struct ItemSummary {
     #[serde(default, with = "crate::b64::date_iso_option", skip_serializing_if = "Option::is_none")]
     due_at: Option<time::Date>,
     done: bool,
+    pinned: bool,
 }
 
 /// Server is opaque on encrypted_body / wrapped_item_key. Title, tags, path,
@@ -87,6 +94,8 @@ pub struct ItemView {
     due_at: Option<time::Date>,
     #[serde(default)]
     done: bool,
+    #[serde(default)]
+    pinned: bool,
 }
 
 impl ItemView {
@@ -98,6 +107,15 @@ impl ItemView {
     }
     pub fn type_str(&self) -> &str {
         &self.type_
+    }
+    pub fn title_str(&self) -> &str {
+        &self.title
+    }
+    pub fn encrypted_body_bytes(&self) -> Option<&[u8]> {
+        self.encrypted_body.as_deref()
+    }
+    pub fn wrapped_item_key_bytes(&self) -> Option<&[u8]> {
+        self.wrapped_item_key.as_deref()
     }
 }
 
@@ -139,6 +157,7 @@ pub struct UpdateItemBody {
     #[serde(default, with = "crate::b64::date_iso_option")]
     due_at: Option<time::Date>,
     done: Option<bool>,
+    pinned: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,12 +228,12 @@ async fn list(
     }
     let rows = sqlx::query_as::<_, ItemSummary>(
         r#"
-        SELECT id, type, title, tags, path, updated_at, due_at, done
+        SELECT id, type, title, tags, path, updated_at, due_at, done, pinned
           FROM items
          WHERE space_id = $1
            AND ($2::text IS NULL OR type = $2)
            AND CASE WHEN $3::bool THEN deleted_at IS NOT NULL ELSE deleted_at IS NULL END
-         ORDER BY COALESCE(deleted_at, updated_at) DESC
+         ORDER BY pinned DESC, COALESCE(deleted_at, updated_at) DESC
         "#,
     )
     .bind(space_id)
@@ -282,7 +301,7 @@ async fn create(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id, space_id, type, title, tags, path,
                   encrypted_body, wrapped_item_key, blob_sha256,
-                  created_at, updated_at, deleted_at, due_at, done
+                  created_at, updated_at, deleted_at, due_at, done, pinned
         "#,
     )
     .bind(space_id)
@@ -321,7 +340,7 @@ async fn get_one(
         r#"
         SELECT i.id, i.space_id, i.type, i.title, i.tags, i.path,
                i.encrypted_body, i.wrapped_item_key, i.blob_sha256,
-               i.created_at, i.updated_at, i.deleted_at, i.due_at, i.done
+               i.created_at, i.updated_at, i.deleted_at, i.due_at, i.done, i.pinned
           FROM items i
           JOIN memberships m ON m.space_id = i.space_id
          WHERE i.id = $1 AND m.user_id = $2
@@ -356,7 +375,7 @@ async fn update(
         r#"
         SELECT i.id, i.space_id, i.type, i.title, i.tags, i.path,
                i.encrypted_body, i.wrapped_item_key, i.blob_sha256,
-               i.created_at, i.updated_at, i.deleted_at, i.due_at, i.done
+               i.created_at, i.updated_at, i.deleted_at, i.due_at, i.done, i.pinned
           FROM items i
           JOIN memberships m ON m.space_id = i.space_id
          WHERE i.id = $1 AND m.user_id = $2
@@ -387,6 +406,13 @@ async fn update(
         ));
     }
 
+    // Snapshot the current body before overwriting. Only when the body
+    // actually changes (update_body=true) — otherwise tag/path/done/pinned
+    // toggles would each create a noise version.
+    if body.update_body {
+        snapshot_version(&state.pool, &existing, user.user_id).await.ok();
+    }
+
     let updated = sqlx::query_as::<_, ItemView>(
         r#"
         UPDATE items
@@ -397,11 +423,12 @@ async fn update(
                path              = COALESCE($7, path),
                due_at            = CASE WHEN $8::bool THEN $9 ELSE due_at END,
                done              = COALESCE($10, done),
+               pinned            = COALESCE($11, pinned),
                updated_at        = NOW()
          WHERE id = $1
         RETURNING id, space_id, type, title, tags, path,
                   encrypted_body, wrapped_item_key, blob_sha256,
-                  created_at, updated_at, deleted_at, due_at, done
+                  created_at, updated_at, deleted_at, due_at, done, pinned
         "#,
     )
     .bind(id)
@@ -414,6 +441,7 @@ async fn update(
     .bind(body.update_due_at)
     .bind(body.due_at)
     .bind(body.done)
+    .bind(body.pinned)
     .fetch_one(&state.pool)
     .await?;
     crate::audit::record_item(
@@ -425,6 +453,194 @@ async fn update(
         Some(serde_json::json!({"type": updated.type_str()})),
     )
     .await;
+    Ok(Json(updated))
+}
+
+async fn snapshot_version(
+    pool: &sqlx::PgPool,
+    existing: &ItemView,
+    user_id: Uuid,
+) -> sqlx::Result<()> {
+    let next: (i32,) = sqlx::query_as(
+        "SELECT COALESCE(MAX(version), 0) + 1 FROM item_versions WHERE item_id = $1",
+    )
+    .bind(existing.id())
+    .fetch_one(pool)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO item_versions
+            (item_id, version, title, encrypted_body, wrapped_item_key, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(existing.id())
+    .bind(next.0)
+    .bind(existing.title_str())
+    .bind(existing.encrypted_body_bytes())
+    .bind(existing.wrapped_item_key_bytes())
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct VersionSummary {
+    id: Uuid,
+    version: i32,
+    title: String,
+    #[serde(with = "time::serde::rfc3339")]
+    created_at: OffsetDateTime,
+    created_by: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct VersionDetail {
+    id: Uuid,
+    version: i32,
+    title: String,
+    #[serde(with = "crate::b64::option")]
+    encrypted_body: Option<Vec<u8>>,
+    #[serde(with = "crate::b64::option")]
+    wrapped_item_key: Option<Vec<u8>>,
+    #[serde(with = "time::serde::rfc3339")]
+    created_at: OffsetDateTime,
+}
+
+async fn list_versions(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<VersionSummary>>> {
+    let _: (Uuid,) = sqlx::query_as(
+        r#"
+        SELECT i.id FROM items i
+          JOIN memberships m ON m.space_id = i.space_id
+         WHERE i.id = $1 AND m.user_id = $2
+        "#,
+    )
+    .bind(id)
+    .bind(user.user_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| AppError::NotFound)?;
+
+    let rows = sqlx::query_as::<_, VersionSummary>(
+        r#"
+        SELECT id, version, title, created_at, created_by
+          FROM item_versions
+         WHERE item_id = $1
+         ORDER BY version DESC
+        "#,
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(rows))
+}
+
+async fn get_version(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+    Path((id, version)): Path<(Uuid, i32)>,
+) -> AppResult<Json<VersionDetail>> {
+    let _: (Uuid,) = sqlx::query_as(
+        r#"
+        SELECT i.id FROM items i
+          JOIN memberships m ON m.space_id = i.space_id
+         WHERE i.id = $1 AND m.user_id = $2
+        "#,
+    )
+    .bind(id)
+    .bind(user.user_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| AppError::NotFound)?;
+
+    let row: Option<VersionDetail> = sqlx::query_as(
+        r#"
+        SELECT id, version, title, encrypted_body, wrapped_item_key, created_at
+          FROM item_versions
+         WHERE item_id = $1 AND version = $2
+        "#,
+    )
+    .bind(id)
+    .bind(version)
+    .fetch_optional(&state.pool)
+    .await?;
+    Ok(Json(row.ok_or(AppError::NotFound)?))
+}
+
+async fn restore_version(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+    Path((id, version)): Path<(Uuid, i32)>,
+) -> AppResult<Json<ItemView>> {
+    // Authz: load current item for the user; member of space.
+    let existing = sqlx::query_as::<_, ItemView>(
+        r#"
+        SELECT i.id, i.space_id, i.type, i.title, i.tags, i.path,
+               i.encrypted_body, i.wrapped_item_key, i.blob_sha256,
+               i.created_at, i.updated_at, i.deleted_at, i.due_at, i.done, i.pinned
+          FROM items i
+          JOIN memberships m ON m.space_id = i.space_id
+         WHERE i.id = $1 AND m.user_id = $2 AND i.deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(user.user_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    // Snapshot current state before restoring (so the restore is itself
+    // versioned + reversible).
+    snapshot_version(&state.pool, &existing, user.user_id).await.ok();
+
+    let snap: Option<(String, Option<Vec<u8>>, Option<Vec<u8>>)> = sqlx::query_as(
+        r#"
+        SELECT title, encrypted_body, wrapped_item_key
+          FROM item_versions
+         WHERE item_id = $1 AND version = $2
+        "#,
+    )
+    .bind(id)
+    .bind(version)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (snap_title, snap_body, snap_key) = snap.ok_or(AppError::NotFound)?;
+
+    let updated = sqlx::query_as::<_, ItemView>(
+        r#"
+        UPDATE items
+           SET title             = $2,
+               encrypted_body    = $3,
+               wrapped_item_key  = $4,
+               updated_at        = NOW()
+         WHERE id = $1
+        RETURNING id, space_id, type, title, tags, path,
+                  encrypted_body, wrapped_item_key, blob_sha256,
+                  created_at, updated_at, deleted_at, due_at, done, pinned
+        "#,
+    )
+    .bind(id)
+    .bind(&snap_title)
+    .bind(&snap_body)
+    .bind(&snap_key)
+    .fetch_one(&state.pool)
+    .await?;
+
+    crate::audit::record_item(
+        &state.pool,
+        user.user_id,
+        updated.space_id(),
+        updated.id(),
+        "item.restore_version",
+        Some(serde_json::json!({"version": version})),
+    )
+    .await;
+
     Ok(Json(updated))
 }
 
@@ -543,7 +759,7 @@ async fn restore(
          WHERE id = $1
         RETURNING id, space_id, type, title, tags, path,
                   encrypted_body, wrapped_item_key, blob_sha256,
-                  created_at, updated_at, deleted_at, due_at, done
+                  created_at, updated_at, deleted_at, due_at, done, pinned
         "#,
     )
     .bind(id)

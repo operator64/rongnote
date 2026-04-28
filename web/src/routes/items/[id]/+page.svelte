@@ -1,9 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import BookmarkEditor from '$lib/BookmarkEditor.svelte';
   import FileEditor from '$lib/FileEditor.svelte';
   import NoteEditor from '$lib/NoteEditor.svelte';
   import SecretEditor from '$lib/SecretEditor.svelte';
+  import SnippetEditor from '$lib/SnippetEditor.svelte';
   import TaskEditor from '$lib/TaskEditor.svelte';
   import { api, ApiError, type Item } from '$lib/api';
 
@@ -50,6 +52,10 @@
   <FileEditor {item} />
 {:else if item.type === 'task'}
   <TaskEditor {item} />
+{:else if item.type === 'snippet'}
+  <SnippetEditor {item} />
+{:else if item.type === 'bookmark'}
+  <BookmarkEditor {item} />
 {:else}
   <NoteEditor {item} />
 {/if}

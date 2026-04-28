@@ -24,6 +24,35 @@ class ItemStore {
   loading = $state(false);
   filter = $state<ItemsFilter>({});
   view = $state<ViewMode>('active');
+  /// Decrypted note bodies, populated as the user opens notes. Used by the
+  /// backlinks panel to scan for `[[wiki-links]]` without having to ask
+  /// each editor.
+  decryptedNoteBodies = $state<Record<string, string>>({});
+
+  /// Title of every note that currently links to `targetTitle`. Returns ids
+  /// of source notes. Case-insensitive match. Skips empty titles.
+  backlinksFor(targetTitle: string): { id: string; title: string }[] {
+    const t = targetTitle.trim().toLowerCase();
+    if (!t) return [];
+    const re = /\[\[([^\[\]\n|]+)(?:\|[^\[\]\n]+)?\]\]/g;
+    const out: { id: string; title: string }[] = [];
+    for (const [id, body] of Object.entries(this.decryptedNoteBodies)) {
+      let m: RegExpExecArray | null;
+      re.lastIndex = 0;
+      while ((m = re.exec(body))) {
+        if (m[1].trim().toLowerCase() === t) {
+          const src = this.list.find((n) => n.id === id);
+          if (src) out.push({ id, title: src.title });
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  setDecryptedBody(id: string, body: string): void {
+    this.decryptedNoteBodies = { ...this.decryptedNoteBodies, [id]: body };
+  }
 
   filteredList = $derived.by(() => {
     const f = this.filter;
@@ -37,6 +66,8 @@ class ItemStore {
     });
     if (f.type === 'task') {
       result = [...result].sort(taskCompare);
+    } else {
+      result = [...result].sort(defaultCompare);
     }
     return result;
   });
@@ -87,7 +118,14 @@ class ItemStore {
     for (const n of this.list) counts.set(n.type, (counts.get(n.type) ?? 0) + 1);
     // Always surface the user-creatable types so the "+" button has a way
     // to switch into them even when there are zero items yet.
-    const ALWAYS_SHOW: ItemType[] = ['note', 'task', 'secret', 'file'];
+    const ALWAYS_SHOW: ItemType[] = [
+      'note',
+      'task',
+      'secret',
+      'snippet',
+      'bookmark',
+      'file'
+    ];
     for (const t of ALWAYS_SHOW) if (!counts.has(t)) counts.set(t, 0);
     const order: ItemType[] = [
       'note',
@@ -140,7 +178,8 @@ class ItemStore {
       path: item.path,
       updated_at: item.updated_at,
       due_at: item.due_at ?? null,
-      done: item.done
+      done: item.done,
+      pinned: item.pinned
     };
     const idx = this.list.findIndex((n) => n.id === item.id);
     if (idx >= 0) {
@@ -160,6 +199,25 @@ class ItemStore {
 
   clearFilter() {
     this.filter = {};
+  }
+
+  /// Optimistic pin / unpin from anywhere — list, editor, palette.
+  async togglePin(id: string): Promise<void> {
+    const idx = this.list.findIndex((n) => n.id === id);
+    if (idx < 0) return;
+    const before = this.list[idx];
+    const after: ItemSummary = { ...before, pinned: !before.pinned };
+    this.list = [...this.list.slice(0, idx), after, ...this.list.slice(idx + 1)];
+    try {
+      const updated = await api.updateItem(id, { pinned: after.pinned });
+      this.upsert(updated);
+    } catch (err) {
+      const ri = this.list.findIndex((n) => n.id === id);
+      if (ri >= 0) {
+        this.list = [...this.list.slice(0, ri), before, ...this.list.slice(ri + 1)];
+      }
+      throw err;
+    }
   }
 
   /// Optimistic toggle of a task's done state. Reverts on server error.
@@ -188,15 +246,21 @@ class ItemStore {
   }
 }
 
-/// open tasks first by due_at asc (with null at the end of the open group),
-/// done tasks at the bottom.
+/// pinned first; then open tasks by due_at asc (null at the end of the open
+/// group), done tasks at the bottom.
 function taskCompare(a: ItemSummary, b: ItemSummary): number {
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
   if (a.done !== b.done) return a.done ? 1 : -1;
   const ad = a.due_at ?? null;
   const bd = b.due_at ?? null;
   if (ad && !bd) return -1;
   if (!ad && bd) return 1;
   if (ad && bd && ad !== bd) return ad.localeCompare(bd);
+  return b.updated_at.localeCompare(a.updated_at);
+}
+
+function defaultCompare(a: ItemSummary, b: ItemSummary): number {
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
   return b.updated_at.localeCompare(a.updated_at);
 }
 

@@ -1,13 +1,23 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { api } from '$lib/api';
+  import {
+    fromBase64,
+    generateItemKey,
+    open as openSeal,
+    seal,
+    toBase64,
+    utf8Decode,
+    utf8Encode
+  } from '$lib/crypto';
   import { uploadFile } from '$lib/files';
   import { items } from '$lib/items.svelte';
   import { prefs } from '$lib/prefs.svelte';
   import { session } from '$lib/session.svelte';
   import { vault } from '$lib/vault.svelte';
-  import { isPasskeySupported, registerPasskey } from '$lib/webauthn';
+  import { isPasskeySupported } from '$lib/webauthn';
 
   let open = $state(false);
   let query = $state('');
@@ -56,6 +66,26 @@
       hint: 'create',
       run: async () => {
         const item = await api.createItem({ title: 'New secret', type: 'secret' });
+        items.upsert(item);
+        await goto(`/items/${item.id}`);
+      }
+    },
+    {
+      kind: 'action',
+      label: 'new snippet',
+      hint: 'create',
+      run: async () => {
+        const item = await api.createItem({ title: 'New snippet', type: 'snippet' });
+        items.upsert(item);
+        await goto(`/items/${item.id}`);
+      }
+    },
+    {
+      kind: 'action',
+      label: 'new bookmark',
+      hint: 'create',
+      run: async () => {
+        const item = await api.createItem({ title: 'New bookmark', type: 'bookmark' });
         items.upsert(item);
         await goto(`/items/${item.id}`);
       }
@@ -113,6 +143,52 @@
     },
     {
       kind: 'action',
+      label: 'pin / unpin current item',
+      hint: 'view',
+      run: async () => {
+        const id = $page.params?.id;
+        if (!id) throw new Error('open an item first');
+        await items.togglePin(id);
+      }
+    },
+    {
+      kind: 'action',
+      label: "today's daily note",
+      hint: 'create',
+      run: async () => {
+        await openOrCreateDaily();
+      }
+    },
+    {
+      kind: 'action',
+      label: 'scan all notes for backlinks',
+      hint: 'view',
+      run: async () => {
+        await scanAllNotes();
+      }
+    },
+    {
+      kind: 'action',
+      label: 'share current note via link',
+      hint: 'create',
+      run: async () => {
+        const id = $page.params?.id;
+        if (!id) throw new Error('open a note first');
+        await shareCurrentNote(id);
+      }
+    },
+    {
+      kind: 'action',
+      label: 'version history of current item',
+      hint: 'view',
+      run: async () => {
+        const id = $page.params?.id;
+        if (!id) throw new Error('open an item first');
+        await goto(`/items/${id}/history`);
+      }
+    },
+    {
+      kind: 'action',
       label: 'audit log',
       hint: 'security',
       run: async () => {
@@ -143,13 +219,10 @@
   if (isPasskeySupported()) {
     ACTIONS.push({
       kind: 'action',
-      label: 'register passkey',
+      label: 'manage passkeys',
       hint: 'security',
       run: async () => {
-        if (!vault.masterKey) throw new Error('vault locked');
-        const name = prompt('passkey name (e.g. "Yubikey personal")') ?? undefined;
-        await registerPasskey({ masterKey: vault.masterKey, name: name || undefined });
-        alert('passkey registered. you can now sign in with it.');
+        await goto('/items/passkeys');
       }
     });
   }
@@ -168,8 +241,143 @@
     });
   }
 
+  function todayLocal(): { ymd: string; ym: string } {
+    const d = new Date();
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return {
+      ymd: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+      ym: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
+    };
+  }
+
+  /// Generate a fresh share key, decrypt the note body, re-encrypt with the
+  /// share key, ship the ciphertext to the server. The key never leaves the
+  /// browser — it lives only in the URL fragment we put on the clipboard.
+  async function shareCurrentNote(id: string) {
+    if (!vault.masterKey) throw new Error('vault locked');
+    const item = await api.getItem(id);
+    if (item.type !== 'note') throw new Error('only notes can be shared in v1');
+
+    let body = '';
+    if (item.encrypted_body && item.wrapped_item_key) {
+      const ik = openSeal(fromBase64(item.wrapped_item_key), vault.masterKey);
+      body = utf8Decode(openSeal(fromBase64(item.encrypted_body), ik));
+    }
+
+    const days = parseInt(
+      prompt('expire in how many days? (blank = never)', '7') ?? '',
+      10
+    );
+    const expires_in_days = Number.isFinite(days) && days > 0 ? days : null;
+
+    // Use libsodium's randombytes via existing helper — generateItemKey gives
+    // us 32 bytes which doubles fine as a share key.
+    const shareKey = generateItemKey();
+    const cipher = seal(utf8Encode(body), shareKey);
+
+    const share = await api.createShare(id, {
+      encrypted_payload: toBase64(cipher),
+      expires_in_days
+    });
+
+    const fragment = toBase64(shareKey).replace(/\//g, '_').replace(/\+/g, '-');
+    const url = `${location.origin}/share/${share.token}#${fragment}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      alert(`share link copied to clipboard:\n\n${url}`);
+    } catch {
+      prompt('copy this share link:', url);
+    }
+  }
+
+  /// Bulk decrypt every note body so the backlinks panel sees the full
+  /// graph. Runs in series — N small Argon2-free decrypts, fine for the
+  /// realistic sizes we care about.
+  async function scanAllNotes() {
+    if (!vault.masterKey) throw new Error('vault locked');
+    // items.list in active view excludes trash already
+    const todo = items.list.filter((n) => n.type === 'note');
+    let done = 0;
+    for (const summary of todo) {
+      try {
+        const full = await api.getItem(summary.id);
+        if (!full.encrypted_body || !full.wrapped_item_key) {
+          items.setDecryptedBody(summary.id, '');
+          continue;
+        }
+        const ik = openSeal(fromBase64(full.wrapped_item_key), vault.masterKey);
+        const body = utf8Decode(openSeal(fromBase64(full.encrypted_body), ik));
+        items.setDecryptedBody(summary.id, body);
+      } catch (err) {
+        console.warn('scan: failed to decrypt', summary.id, err);
+      }
+      done++;
+    }
+    alert(`scanned ${done} notes for backlinks.`);
+  }
+
+  /// Create a new note from a `/_templates/*` template. Decrypts the
+  /// template's body, re-encrypts under a fresh per-item key for the new
+  /// note, ships it.
+  async function newFromTemplate(templateId: string) {
+    if (!vault.masterKey) throw new Error('vault locked');
+    const source = await api.getItem(templateId);
+    let body = '';
+    if (source.encrypted_body && source.wrapped_item_key) {
+      const ik = openSeal(fromBase64(source.wrapped_item_key), vault.masterKey);
+      body = utf8Decode(openSeal(fromBase64(source.encrypted_body), ik));
+    }
+    const itemKey = generateItemKey();
+    const encryptedBody = seal(utf8Encode(body), itemKey);
+    const wrappedItemKey = seal(itemKey, vault.masterKey);
+    const created = await api.createItem({
+      type: 'note',
+      title: `Untitled (from ${source.title})`,
+      encrypted_body: toBase64(encryptedBody),
+      wrapped_item_key: toBase64(wrappedItemKey),
+      tags: source.tags.filter((t) => t !== 'template'),
+      path: '/'
+    });
+    items.upsert(created);
+    await goto(`/items/${created.id}`);
+  }
+
+  async function openOrCreateDaily() {
+    const { ymd, ym } = todayLocal();
+    const title = `Daily ${ymd}`;
+    const existing = items.list.find((n) => n.type === 'note' && n.title === title);
+    if (existing) {
+      await goto(`/items/${existing.id}`);
+      return;
+    }
+    const item = await api.createItem({
+      type: 'note',
+      title,
+      path: `/journal/${ym}`,
+      tags: ['daily', 'journal']
+    });
+    items.upsert(item);
+    await goto(`/items/${item.id}`);
+  }
+
+  let templateActions = $derived.by<CommandAction[]>(() => {
+    return items.list
+      .filter(
+        (n) =>
+          n.type === 'note' &&
+          (n.path === '/_templates' || n.path.startsWith('/_templates/'))
+      )
+      .map<CommandAction>((n) => ({
+        kind: 'action',
+        label: `new from template: ${n.title}`,
+        hint: 'create',
+        run: () => newFromTemplate(n.id)
+      }));
+  });
+
   let visibleItems = $derived.by<Item[]>(() => {
     const q = query.trim().toLowerCase();
+    const allActions = [...ACTIONS, ...templateActions];
     if (!q) {
       const recent = items.list.slice(0, 8).map<Item>((n) => ({
         kind: 'item',
@@ -178,7 +386,7 @@
         id: n.id,
         type: n.type
       }));
-      return [...recent, ...ACTIONS];
+      return [...recent, ...allActions];
     }
     const itemHits = items.list
       .filter((n) => n.title.toLowerCase().includes(q))
@@ -190,7 +398,7 @@
         id: n.id,
         type: n.type
       }));
-    const actionHits = ACTIONS.filter((a) => a.label.toLowerCase().includes(q));
+    const actionHits = allActions.filter((a) => a.label.toLowerCase().includes(q));
     return [...itemHits, ...actionHits];
   });
 

@@ -1,7 +1,5 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { marked } from 'marked';
-  import Editor from '$lib/Editor.svelte';
   import { api, type Item } from '$lib/api';
   import {
     fromBase64,
@@ -20,6 +18,16 @@
   } from '$lib/items.svelte';
   import { vault } from '$lib/vault.svelte';
 
+  type SnippetPayload = {
+    language: string;
+    code: string;
+    description: string;
+  };
+
+  function emptyPayload(): SnippetPayload {
+    return { language: '', code: '', description: '' };
+  }
+
   type Props = { item: Item };
   let { item: initial }: Props = $props();
 
@@ -28,52 +36,56 @@
   // svelte-ignore state_referenced_locally
   let title = $state(initial.title);
   // svelte-ignore state_referenced_locally
-  let body = $state(decryptBody(initial));
+  let payload = $state<SnippetPayload>(decryptPayload(initial));
   // svelte-ignore state_referenced_locally
   let tagsInput = $state(formatTagInput(initial.tags));
   // svelte-ignore state_referenced_locally
   let pathInput = $state(initial.path);
+  // svelte-ignore state_referenced_locally
+  let lastSavedAt = $state<Date | null>(new Date(initial.updated_at));
   let error = $state('');
   let saving = $state(false);
   let dirty = $state(false);
-  // svelte-ignore state_referenced_locally
-  let lastSavedAt = $state<Date | null>(new Date(initial.updated_at));
-
-  let trashed = $derived(!!item.deleted_at);
-  let preview = $state(false);
-
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const SAVE_DEBOUNCE_MS = 600;
 
-  /// Push the decrypted body into the items store so the backlinks panel
-  /// can index it.
-  $effect(() => {
-    items.setDecryptedBody(item.id, body);
-  });
+  let trashed = $derived(!!item.deleted_at);
+
+  let copyLabel = $state('copy');
+  async function copyCode() {
+    if (!payload.code) return;
+    try {
+      await navigator.clipboard.writeText(payload.code);
+      copyLabel = 'copied';
+      setTimeout(() => (copyLabel = 'copy'), 1500);
+    } catch {
+      copyLabel = 'select+copy';
+    }
+  }
 
   $effect(() => {
     if (initial.id !== item.id) {
       item = initial;
       title = initial.title;
-      body = decryptBody(initial);
+      payload = decryptPayload(initial);
       tagsInput = formatTagInput(initial.tags);
       pathInput = initial.path;
       dirty = false;
-      lastSavedAt = new Date(initial.updated_at);
       error = '';
+      lastSavedAt = new Date(initial.updated_at);
     }
   });
 
-  function decryptBody(n: Item): string {
-    if (!n.encrypted_body || !n.wrapped_item_key) return '';
-    if (!vault.masterKey) throw new Error('vault locked');
+  function decryptPayload(it: Item): SnippetPayload {
+    if (!it.encrypted_body || !it.wrapped_item_key) return emptyPayload();
+    if (!vault.masterKey) return emptyPayload();
     try {
-      const itemKey = openSeal(fromBase64(n.wrapped_item_key), vault.masterKey);
-      const bodyBytes = openSeal(fromBase64(n.encrypted_body), itemKey);
-      return utf8Decode(bodyBytes);
-    } catch (err) {
-      console.error('decrypt failed', err);
-      return '';
+      const itemKey = openSeal(fromBase64(it.wrapped_item_key), vault.masterKey);
+      const bytes = openSeal(fromBase64(it.encrypted_body), itemKey);
+      const parsed = JSON.parse(utf8Decode(bytes)) as Partial<SnippetPayload>;
+      return { ...emptyPayload(), ...parsed };
+    } catch {
+      return emptyPayload();
     }
   }
 
@@ -92,13 +104,13 @@
     }
     saving = true;
     const titleSnap = title;
-    const bodySnap = body;
+    const payloadSnap = JSON.stringify(payload);
     const tagsSnap = parseTagInput(tagsInput);
     const pathSnap = normalizePath(pathInput);
     dirty = false;
     try {
       const itemKey = generateItemKey();
-      const encryptedBody = seal(utf8Encode(bodySnap), itemKey);
+      const encryptedBody = seal(utf8Encode(payloadSnap), itemKey);
       const wrappedItemKey = seal(itemKey, vault.masterKey);
       const updated = await api.updateItem(item.id, {
         title: titleSnap,
@@ -124,7 +136,7 @@
   }
 
   async function del() {
-    if (!confirm('move this note to trash?')) return;
+    if (!confirm('move this snippet to trash?')) return;
     try {
       await api.deleteItem(item.id);
       items.remove(item.id);
@@ -133,19 +145,17 @@
       error = err instanceof Error ? err.message : 'delete failed';
     }
   }
-
   async function restoreItem() {
     try {
       const restored = await api.restoreItem(item.id);
-      items.remove(item.id); // drop from trash list view
+      items.remove(item.id);
       goto(`/items/${restored.id}`, { replaceState: true });
     } catch (err) {
       error = err instanceof Error ? err.message : 'restore failed';
     }
   }
-
   async function hardDelete() {
-    if (!confirm('permanently delete this note? this cannot be undone.')) return;
+    if (!confirm('permanently delete this snippet?')) return;
     try {
       await api.deleteItem(item.id, { hard: true });
       items.remove(item.id);
@@ -167,8 +177,7 @@
     pathInput = (e.target as HTMLInputElement).value;
     scheduleSave();
   }
-  function onBodyChange(next: string) {
-    body = next;
+  function onField(_: Event) {
     scheduleSave();
   }
 
@@ -181,51 +190,6 @@
     if (diff < 60) return `saved ${Math.floor(diff)}s ago`;
     return `saved ${lastSavedAt.toLocaleTimeString()}`;
   });
-
-  function preprocessWikiLinks(md: string): string {
-    return md.replace(
-      /\[\[([^\[\]\n|]+)(?:\|([^\[\]\n]+))?\]\]/g,
-      (_, target: string, alias?: string) => {
-        const t = target.trim();
-        const display = (alias ?? t).trim();
-        const found = items.list.find(
-          (n) => n.type === 'note' && n.title.toLowerCase() === t.toLowerCase()
-        );
-        if (found) return `[${display}](/items/${found.id})`;
-        return `*${display}?*`;
-      }
-    );
-  }
-
-  let rendered = $derived.by(() => {
-    if (!preview) return '';
-    return marked.parse(preprocessWikiLinks(body), { async: false }) as string;
-  });
-
-  /// Notes (in our decrypted-body cache) that link to this note's title.
-  /// Empty until the user has opened the linking notes — there's no
-  /// background scan unless they trigger "scan all" from the palette.
-  let backlinks = $derived.by(() => {
-    if (!title) return [];
-    return items.backlinksFor(title).filter((b) => b.id !== item.id);
-  });
-
-  function onPreviewClick(e: MouseEvent) {
-    const a = (e.target as HTMLElement).closest('a');
-    if (!a) return;
-    const href = a.getAttribute('href') ?? '';
-    if (href.startsWith('/items/')) {
-      e.preventDefault();
-      goto(href);
-    }
-  }
-
-  function noteTitles(): string[] {
-    return items.list
-      .filter((n) => n.type === 'note' && n.id !== item.id)
-      .map((n) => n.title)
-      .filter((t) => t.length > 0);
-  }
 </script>
 
 {#if trashed}
@@ -244,7 +208,7 @@
     oninput={onTitleInput}
     readonly={trashed}
   />
-  <button onclick={() => (preview = !preview)}>{preview ? 'edit' : 'preview'}</button>
+  <button type="button" onclick={copyCode}>{copyLabel}</button>
   {#if !trashed}
     <button class="danger" onclick={del}>delete</button>
   {/if}
@@ -253,11 +217,21 @@
   <input
     class="meta-input"
     type="text"
-    placeholder="tags (comma-separated, optional #)"
+    placeholder="language (e.g. sh, py, ts)"
+    bind:value={payload.language}
+    oninput={onField}
+    autocomplete="off"
+    spellcheck="false"
+    readonly={trashed}
+    style="flex: 0 1 200px;"
+  />
+  <input
+    class="meta-input"
+    type="text"
+    placeholder="tags"
     value={tagsInput}
     oninput={onTagsInput}
     autocomplete="off"
-    spellcheck="false"
     readonly={trashed}
   />
   <input
@@ -267,36 +241,43 @@
     value={pathInput}
     oninput={onPathInput}
     autocomplete="off"
-    spellcheck="false"
     readonly={trashed}
   />
 </div>
-<div class="body">
-  {#if preview}
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <article class="md" onclick={onPreviewClick} role="document">
-      {@html rendered}
-    </article>
-  {:else}
-    <Editor value={body} onChange={onBodyChange} wikiTitles={noteTitles} />
-  {/if}
-</div>
-{#if backlinks.length > 0}
-  <div class="backlinks">
-    <div class="backlinks-head muted">{backlinks.length} backlink{backlinks.length === 1 ? '' : 's'}</div>
-    <div class="backlinks-list">
-      {#each backlinks as b (b.id)}
-        <a class="backlink" href={`/items/${b.id}`}>{b.title || '(untitled)'}</a>
-      {/each}
-    </div>
-  </div>
-{/if}
 
-<div class="meta row">
-  {#if error}<span class="danger">{error}</span>{:else}<span class="muted">{savedLabel}</span>{/if}
+<div class="body">
+  <div class="form">
+    <label class="field grow-field">
+      <span class="lbl">code</span>
+      <textarea
+        class="code"
+        spellcheck="false"
+        bind:value={payload.code}
+        oninput={onField}
+        readonly={trashed}
+      ></textarea>
+    </label>
+    <label class="field">
+      <span class="lbl">description</span>
+      <textarea
+        rows="3"
+        spellcheck="false"
+        bind:value={payload.description}
+        oninput={onField}
+        readonly={trashed}
+      ></textarea>
+    </label>
+  </div>
+</div>
+
+<div class="status row">
+  {#if error}
+    <span class="danger">{error}</span>
+  {:else}
+    <span class="muted">{savedLabel}</span>
+  {/if}
   <span class="grow"></span>
-  <span class="muted" title="encrypted on this device">e2e · {item.id.slice(0, 8)}</span>
+  <span class="muted">e2e · snippet · {item.id.slice(0, 8)}</span>
 </div>
 
 <style>
@@ -304,6 +285,7 @@
     height: 32px;
     padding: 0 8px;
     border-bottom: 1px solid var(--border);
+    gap: 6px;
   }
   .title-input {
     border: none;
@@ -311,9 +293,7 @@
     font-weight: 600;
     padding: 0 4px;
   }
-  .title-input:focus {
-    outline: none;
-  }
+  .title-input:focus { outline: none; }
   .meta-row {
     height: 26px;
     padding: 0 8px;
@@ -329,84 +309,41 @@
     padding: 0 4px;
     min-width: 0;
   }
-  .meta-input:focus {
-    outline: none;
-    color: var(--fg);
-  }
-  .meta-input.path {
-    flex: 0 1 200px;
-  }
-  .body {
+  .meta-input:focus { outline: none; color: var(--fg); }
+  .meta-input.path { flex: 0 1 200px; }
+  .body { flex: 1; overflow: auto; display: flex; }
+  .form {
     flex: 1;
-    overflow: hidden;
+    padding: 12px 16px;
     display: flex;
+    flex-direction: column;
+    gap: 12px;
+    height: 100%;
+    box-sizing: border-box;
   }
-  .body :global(.cm-host) {
-    flex: 1;
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field textarea { width: 100%; }
+  .lbl { font-size: 11px; color: var(--muted); }
+  .grow-field { flex: 1 1 auto; }
+  .grow-field textarea { flex: 1 1 auto; height: 100%; min-height: 240px; }
+  textarea {
+    font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--border); padding: 4px 8px; border-radius: 0;
+    resize: vertical;
   }
-  .meta {
-    height: 22px;
-    padding: 0 8px;
-    border-top: 1px solid var(--border);
-    font-size: 12px;
+  textarea.code {
+    font-family: var(--font-mono);
+    white-space: pre;
+    overflow: auto;
   }
-  .backlinks {
-    border-top: 1px solid var(--border);
-    padding: 6px 8px;
-    max-height: 100px;
-    overflow-y: auto;
-  }
-  .backlinks-head {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 4px;
-  }
-  .backlinks-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 12px;
-  }
-  .backlink {
-    font-size: 12px;
+  .status {
+    height: 22px; padding: 0 8px;
+    border-top: 1px solid var(--border); font-size: 12px;
   }
   .trash-banner {
     background: rgba(127, 127, 127, 0.1);
     border-bottom: 1px solid var(--border);
-    padding: 4px 8px;
-    gap: 8px;
-    font-size: 12px;
+    padding: 4px 8px; gap: 8px; font-size: 12px;
   }
-  .dimmed {
-    opacity: 0.7;
-  }
-  .dimmed input[readonly] {
-    cursor: default;
-  }
-  .md {
-    flex: 1;
-    overflow: auto;
-    padding: 12px 16px;
-    font-family:
-      ui-sans-serif,
-      system-ui,
-      -apple-system,
-      "Segoe UI",
-      sans-serif;
-    line-height: 1.55;
-  }
-  .md :global(pre),
-  .md :global(code) {
-    font-family: var(--font-mono);
-  }
-  .md :global(pre) {
-    background: rgba(127, 127, 127, 0.08);
-    padding: 8px;
-    overflow: auto;
-  }
-  .md :global(h1),
-  .md :global(h2),
-  .md :global(h3) {
-    margin: 1em 0 0.4em;
-  }
+  .dimmed { opacity: 0.7; }
 </style>

@@ -40,6 +40,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/register/finish", post(register_finish))
         .route("/login/begin", post(login_begin))
         .route("/login/finish", post(login_finish))
+        .route("/", axum::routing::get(list))
+        .route("/:id", axum::routing::delete(delete_one))
 }
 
 pub struct PasskeyService {
@@ -362,6 +364,59 @@ async fn login_finish(
         master_wrap_passkey,
     };
     Ok((StatusCode::OK, headers, Json(body)).into_response())
+}
+
+// --- List + delete (registered passkeys) ---
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PasskeyListItem {
+    id: Uuid,
+    name: String,
+    #[serde(with = "time::serde::rfc3339")]
+    created_at: time::OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    last_used_at: Option<time::OffsetDateTime>,
+}
+
+async fn list(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+) -> AppResult<Json<Vec<PasskeyListItem>>> {
+    let rows = sqlx::query_as::<_, PasskeyListItem>(
+        r#"
+        SELECT id, name, created_at, last_used_at
+          FROM passkeys
+         WHERE user_id = $1
+         ORDER BY created_at ASC
+        "#,
+    )
+    .bind(user.user_id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(rows))
+}
+
+async fn delete_one(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+) -> AppResult<StatusCode> {
+    let row = sqlx::query_as::<_, (String,)>(
+        "DELETE FROM passkeys WHERE id = $1 AND user_id = $2 RETURNING name",
+    )
+    .bind(id)
+    .bind(user.user_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let name = row.map(|r| r.0).ok_or(AppError::NotFound)?;
+    crate::audit::record_user(
+        &state.pool,
+        user.user_id,
+        "auth.passkey_delete",
+        Some(serde_json::json!({"name": name})),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // --- Helpers ---

@@ -39,6 +39,7 @@ export interface ItemSummary {
   /// 'YYYY-MM-DD' for tasks, null/undefined otherwise.
   due_at?: string | null;
   done: boolean;
+  pinned: boolean;
 }
 
 export interface Item {
@@ -57,6 +58,7 @@ export interface Item {
   deleted_at?: string | null;
   due_at?: string | null;
   done: boolean;
+  pinned: boolean;
 }
 
 export interface ListItemsOptions {
@@ -131,6 +133,47 @@ export interface UploadBlobResponse {
   already_existed: boolean;
 }
 
+export interface PasskeyListItem {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at?: string | null;
+}
+
+export interface ShareView {
+  id: string;
+  token: string;
+  item_id: string;
+  item_title: string;
+  created_at: string;
+  expires_at?: string | null;
+  use_count: number;
+}
+
+export interface PublicShareView {
+  item_type: ItemType;
+  item_title: string;
+  encrypted_payload: string;
+  expires_at?: string | null;
+}
+
+export interface VersionSummary {
+  id: string;
+  version: number;
+  title: string;
+  created_at: string;
+  created_by?: string | null;
+}
+
+export interface VersionDetail {
+  id: string;
+  version: number;
+  title: string;
+  encrypted_body: string | null;
+  wrapped_item_key: string | null;
+  created_at: string;
+}
+
 export interface AuditEntry {
   id: string;
   user_id: string | null;
@@ -154,6 +197,7 @@ export interface UpdateItemInput {
   update_due_at?: boolean;
   due_at?: string | null;
   done?: boolean;
+  pinned?: boolean;
 }
 
 export const api = {
@@ -199,6 +243,10 @@ export const api = {
       '/api/v1/auth/passkey/login/finish',
       payload
     ),
+  listPasskeys: () =>
+    request<PasskeyListItem[]>('GET', '/api/v1/auth/passkey'),
+  deletePasskey: (id: string) =>
+    request<void>('DELETE', `/api/v1/auth/passkey/${id}`),
 
   listItems: (opts: ListItemsOptions = {}) => {
     const params = new URLSearchParams();
@@ -244,6 +292,24 @@ export const api = {
 
   listAuditLog: (limit = 100) =>
     request<AuditEntry[]>('GET', `/api/v1/audit_log?limit=${limit}`),
+
+  createShare: (
+    itemId: string,
+    payload: { encrypted_payload: string; expires_in_days?: number | null }
+  ) => request<ShareView>('POST', `/api/v1/items/${itemId}/share`, payload),
+  listShares: (itemId: string) =>
+    request<ShareView[]>('GET', `/api/v1/items/${itemId}/shares`),
+  revokeShare: (shareId: string) =>
+    request<void>('DELETE', `/api/v1/shares/${shareId}`),
+  publicShare: (token: string) =>
+    request<PublicShareView>('GET', `/api/v1/share/${token}`),
+
+  listVersions: (itemId: string) =>
+    request<VersionSummary[]>('GET', `/api/v1/items/${itemId}/versions`),
+  getVersion: (itemId: string, version: number) =>
+    request<VersionDetail>('GET', `/api/v1/items/${itemId}/versions/${version}`),
+  restoreVersion: (itemId: string, version: number) =>
+    request<Item>('POST', `/api/v1/items/${itemId}/versions/${version}/restore`),
 
   fetchBlob: async (hexSha256: string): Promise<Uint8Array> => {
     const res = await fetch(`/api/v1/files/${hexSha256}`, { credentials: 'include' });

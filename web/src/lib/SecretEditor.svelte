@@ -19,6 +19,7 @@
     parseTagInput
   } from '$lib/items.svelte';
   import { generateCode, parseTotpInput, TotpError, type TotpConfig } from '$lib/totp';
+  import { HibpError, pwnedCount } from '$lib/hibp';
   import { vault } from '$lib/vault.svelte';
 
   type SecretPayload = {
@@ -60,6 +61,37 @@
   const CLIPBOARD_CLEAR_MS = 30_000;
 
   let showGenerator = $state(false);
+
+  let breachState = $state<
+    | { kind: 'idle' }
+    | { kind: 'checking' }
+    | { kind: 'safe' }
+    | { kind: 'pwned'; count: number }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' });
+
+  async function checkBreach() {
+    if (!payload.password) {
+      breachState = { kind: 'error', message: 'no password to check' };
+      return;
+    }
+    breachState = { kind: 'checking' };
+    try {
+      const count = await pwnedCount(payload.password);
+      breachState = count > 0 ? { kind: 'pwned', count } : { kind: 'safe' };
+    } catch (err) {
+      breachState = {
+        kind: 'error',
+        message: err instanceof HibpError ? err.message : 'check failed'
+      };
+    }
+  }
+  $effect(() => {
+    // Reset breach state when the password changes — old result no longer
+    // applies.
+    void payload.password;
+    breachState = { kind: 'idle' };
+  });
 
   // Live TOTP code state.
   let totpConfig = $state<TotpConfig | null>(null);
@@ -391,6 +423,26 @@
           onClose={() => (showGenerator = false)}
         />
       {/if}
+      <div class="row breach-row">
+        <button
+          type="button"
+          class="link"
+          onclick={checkBreach}
+          disabled={breachState.kind === 'checking'}
+        >
+          {breachState.kind === 'checking' ? 'checking…' : 'check breach (HIBP)'}
+        </button>
+        {#if breachState.kind === 'safe'}
+          <span class="muted small">not found in any known breach</span>
+        {:else if breachState.kind === 'pwned'}
+          <span class="danger small">
+            seen {breachState.count.toLocaleString()} times in known breaches —
+            don't use
+          </span>
+        {:else if breachState.kind === 'error'}
+          <span class="muted small">{breachState.message}</span>
+        {/if}
+      </div>
     </label>
 
     <label class="field">
@@ -541,6 +593,22 @@
     border: 1px solid var(--border);
     padding: 2px 6px;
     user-select: all;
+  }
+  .breach-row {
+    margin-top: 4px;
+    gap: 8px;
+  }
+  .link {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 11px;
+    text-decoration: underline;
+  }
+  .link:hover {
+    color: var(--fg);
   }
   textarea {
     font: inherit;
