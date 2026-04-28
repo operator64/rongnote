@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { Pin } from '@lucide/svelte';
+  import { Menu, Pin, Search } from '@lucide/svelte';
   import CommandPalette from '$lib/CommandPalette.svelte';
   import ItemIcon from '$lib/ItemIcon.svelte';
   import Sidebar from '$lib/Sidebar.svelte';
@@ -19,6 +19,32 @@
   onMount(() => items.refresh());
 
   let activeId = $derived($page.params?.id ?? null);
+
+  // True iff we're on the list-only landing page; on mobile this means
+  // hide the detail pane. Anything deeper (item, audit, passkeys, history)
+  // means show the detail pane and hide the list.
+  let onListView = $derived(
+    $page.url.pathname === '/items' || $page.url.pathname === '/items/'
+  );
+
+  let drawerOpen = $state(false);
+
+  // Close the drawer when the user picks a filter or navigates.
+  $effect(() => {
+    void items.filter.type;
+    void items.filter.tag;
+    void items.filter.pathPrefix;
+    void items.view;
+    void $page.url.pathname;
+    drawerOpen = false;
+  });
+
+  function openPalette() {
+    // Same global keyboard handler the palette listens for. Synthesise it.
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'k', ctrlKey: true })
+    );
+  }
 
   let filePicker: HTMLInputElement | undefined = $state();
   let uploadStatus = $state('');
@@ -162,8 +188,16 @@
   let inTrash = $derived(items.view === 'trash');
 </script>
 
-<div class="shell">
-  <Sidebar />
+<div class="shell" class:drawer-open={drawerOpen} class:list-only={onListView} class:detail-only={!onListView}>
+  <div class="sidebar-wrap" class:drawer-open={drawerOpen}>
+    <Sidebar />
+    <button
+      type="button"
+      class="drawer-close-area"
+      aria-label="close menu"
+      onclick={() => (drawerOpen = false)}
+    ></button>
+  </div>
 
   <section
     class="list-pane"
@@ -181,6 +215,14 @@
       style="display: none;"
     />
     <div class="pane-head row">
+      <button
+        type="button"
+        class="icon-btn mobile-only"
+        aria-label="open menu"
+        onclick={() => (drawerOpen = !drawerOpen)}
+      >
+        <Menu size={16} />
+      </button>
       {#if inTrash}
         <span class="grow muted">trash</span>
       {:else if filterLabel}
@@ -195,6 +237,14 @@
       {:else}
         <span class="grow muted">items</span>
       {/if}
+      <button
+        type="button"
+        class="icon-btn mobile-only"
+        aria-label="search"
+        onclick={openPalette}
+      >
+        <Search size={16} />
+      </button>
       {#if !inTrash}
         <button onclick={newItem} title="new {items.filter.type ?? 'note'}">+</button>
       {/if}
@@ -246,6 +296,11 @@
   </section>
 
   <main class="detail-pane">
+    {#if !onListView}
+      <div class="mobile-back mobile-only">
+        <button type="button" onclick={() => goto('/items')}>← items</button>
+      </div>
+    {/if}
     {@render children()}
   </main>
 </div>
@@ -255,18 +310,19 @@
     <span class="muted">{uploadStatus}</span>
     <span class="sep">·</span>
   {/if}
-  <span class="grow">{session.user?.email ?? ''}</span>
-  <span title="press Ctrl-K">⌘K</span>
+  <span class="grow desktop-only">{session.user?.email ?? ''}</span>
+  <span class="grow mobile-only"></span>
+  <span title="press Ctrl-K" class="desktop-only">⌘K</span>
   <span>{items.filteredList.length}/{items.list.length}</span>
-  <span class="sep">·</span>
+  <span class="sep desktop-only">·</span>
   <button
-    class="sb-btn"
+    class="sb-btn desktop-only"
     title={`font size ${prefs.fontSize}px — click to shrink`}
     onclick={() => prefs.bumpFontSize(-1)}
   >A−</button>
-  <span class="muted small">{prefs.fontSize}</span>
+  <span class="muted small desktop-only">{prefs.fontSize}</span>
   <button
-    class="sb-btn"
+    class="sb-btn desktop-only"
     title="font size — click to grow"
     onclick={() => prefs.bumpFontSize(+1)}
   >A+</button>
@@ -401,19 +457,137 @@
   .small {
     font-size: 11px;
   }
-  @media (max-width: 900px) {
+  /* On screens too narrow for the 3-column desktop layout, the sidebar
+     becomes a slide-in drawer and we stack list/detail (one at a time). */
+  .sidebar-wrap {
+    display: contents; /* pass children straight to the grid by default */
+  }
+  .drawer-close-area {
+    display: none;
+  }
+  .icon-btn {
+    border: none;
+    background: transparent;
+    padding: 4px;
+    cursor: pointer;
+    color: var(--fg);
+    display: inline-flex;
+    align-items: center;
+  }
+  .icon-btn:hover {
+    color: var(--accent);
+  }
+  .mobile-only {
+    display: none;
+  }
+  .mobile-back {
+    height: 32px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+  }
+  .mobile-back button {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+  }
+
+  @media (max-width: 900px) and (min-width: 701px) {
+    /* Tablet: keep two columns, sidebar becomes drawer. */
     .shell {
-      grid-template-columns: 240px 1fr;
+      grid-template-columns: 280px 1fr;
     }
-    .shell :global(.sidebar) {
+    .sidebar-wrap {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      pointer-events: none;
+      display: grid;
+      grid-template-columns: 200px 1fr;
+    }
+    .sidebar-wrap :global(.sidebar) {
+      transform: translateX(-100%);
+      transition: transform 0.18s ease;
+      background: var(--bg);
+      pointer-events: auto;
+      box-shadow: 1px 0 0 var(--border);
+    }
+    .drawer-close-area {
+      display: block;
+      background: rgba(0, 0, 0, 0);
+      transition: background 0.18s ease;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }
+    .sidebar-wrap.drawer-open {
+      pointer-events: auto;
+    }
+    .sidebar-wrap.drawer-open :global(.sidebar) {
+      transform: translateX(0);
+    }
+    .sidebar-wrap.drawer-open .drawer-close-area {
+      background: rgba(0, 0, 0, 0.4);
+    }
+    .mobile-only {
+      display: inline-flex;
+    }
+    .desktop-only {
       display: none;
     }
   }
+
   @media (max-width: 700px) {
+    /* Phone: stack mode. Show list OR detail, never both. */
     .shell {
       grid-template-columns: 1fr;
     }
-    .list-pane {
+    .shell.list-only .detail-pane {
+      display: none;
+    }
+    .shell.detail-only .list-pane {
+      display: none;
+    }
+    .sidebar-wrap {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      pointer-events: none;
+      display: grid;
+      grid-template-columns: 220px 1fr;
+    }
+    .sidebar-wrap :global(.sidebar) {
+      transform: translateX(-100%);
+      transition: transform 0.18s ease;
+      background: var(--bg);
+      pointer-events: auto;
+      box-shadow: 1px 0 0 var(--border);
+    }
+    .drawer-close-area {
+      display: block;
+      background: rgba(0, 0, 0, 0);
+      transition: background 0.18s ease;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }
+    .sidebar-wrap.drawer-open {
+      pointer-events: auto;
+    }
+    .sidebar-wrap.drawer-open :global(.sidebar) {
+      transform: translateX(0);
+    }
+    .sidebar-wrap.drawer-open .drawer-close-area {
+      background: rgba(0, 0, 0, 0.4);
+    }
+    .mobile-only {
+      display: inline-flex;
+    }
+    .desktop-only {
       display: none;
     }
   }
