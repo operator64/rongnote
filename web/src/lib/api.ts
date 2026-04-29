@@ -51,7 +51,13 @@ export interface Item {
   tags: string[];
   path: string;
   encrypted_body: string | null;
+  /// For personal-space items: the item_key wrapped under master_key
+  /// (XSalsa20-Poly1305). For team-space items: the caller's sealed-box wrap
+  /// of the item_key with their X25519 public key. The discriminator is
+  /// `key_wrap`. Null when the item has no body yet.
   wrapped_item_key: string | null;
+  /// 'master' for personal-space, 'sealed' for team-space, null when no body.
+  key_wrap?: 'master' | 'sealed' | null;
   /// Hex-encoded sha256 for type='file', null otherwise.
   blob_sha256?: string | null;
   created_at: string;
@@ -60,6 +66,13 @@ export interface Item {
   due_at?: string | null;
   done: boolean;
   pinned: boolean;
+}
+
+/// Per-member sealed wrap of an item key, used in CreateItemInput and
+/// UpdateItemInput for team-space items. `sealed_item_key` is base64.
+export interface MemberKeyInput {
+  user_id: string;
+  sealed_item_key: string;
 }
 
 export interface ListItemsOptions {
@@ -121,7 +134,10 @@ export interface CreateItemInput {
   type?: ItemType;
   title: string;
   encrypted_body?: string;
+  /// Personal-space wrap. Mutually exclusive with member_keys.
   wrapped_item_key?: string;
+  /// Team-space wraps — one entry per current member of the target space.
+  member_keys?: MemberKeyInput[];
   blob_sha256?: string;
   tags?: string[];
   path?: string;
@@ -213,6 +229,9 @@ export interface UpdateItemInput {
   update_body?: boolean;
   encrypted_body?: string | null;
   wrapped_item_key?: string | null;
+  /// Required when update_body=true on a team-space item — fresh wraps for
+  /// the rotated item_key, one per current member.
+  member_keys?: MemberKeyInput[];
   tags?: string[];
   path?: string;
   /// Set true to apply due_at (incl. clearing to null).
@@ -323,8 +342,17 @@ export const api = {
   deleteSpace: (id: string) => request<void>('DELETE', `/api/v1/spaces/${id}`),
   listMembers: (spaceId: string) =>
     request<Member[]>('GET', `/api/v1/spaces/${spaceId}/members`),
-  addMember: (spaceId: string, email: string, role: 'editor' | 'viewer') =>
-    request<Member>('POST', `/api/v1/spaces/${spaceId}/members`, { email, role }),
+  addMember: (
+    spaceId: string,
+    email: string,
+    role: 'editor' | 'viewer',
+    item_keys: { item_id: string; sealed_item_key: string }[] = []
+  ) =>
+    request<Member>('POST', `/api/v1/spaces/${spaceId}/members`, {
+      email,
+      role,
+      item_keys
+    }),
   setMemberRole: (spaceId: string, userId: string, role: 'editor' | 'viewer') =>
     request<void>('PATCH', `/api/v1/spaces/${spaceId}/members/${userId}`, { role }),
   removeMember: (spaceId: string, userId: string) =>

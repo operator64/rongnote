@@ -4,14 +4,12 @@
   import { page } from '$app/stores';
   import { api } from '$lib/api';
   import {
-    fromBase64,
     generateItemKey,
-    open as openSeal,
     seal,
     toBase64,
-    utf8Decode,
     utf8Encode
   } from '$lib/crypto';
+  import { decryptItemBody, encryptBodyForSpace } from '$lib/itemCrypto';
   import { uploadFile } from '$lib/files';
   import { items } from '$lib/items.svelte';
   import { prefs } from '$lib/prefs.svelte';
@@ -296,15 +294,13 @@
   /// share key, ship the ciphertext to the server. The key never leaves the
   /// browser — it lives only in the URL fragment we put on the clipboard.
   async function shareCurrentNote(id: string) {
-    if (!vault.masterKey) throw new Error('vault locked');
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
+      throw new Error('vault locked');
+    }
     const item = await api.getItem(id);
     if (item.type !== 'note') throw new Error('only notes can be shared in v1');
 
-    let body = '';
-    if (item.encrypted_body && item.wrapped_item_key) {
-      const ik = openSeal(fromBase64(item.wrapped_item_key), vault.masterKey);
-      body = utf8Decode(openSeal(fromBase64(item.encrypted_body), ik));
-    }
+    const body = decryptItemBody(item, vault.masterKey, vault.publicKey, vault.privateKey);
 
     const days = parseInt(
       prompt('expire in how many days? (blank = never)', '7') ?? '',
@@ -336,7 +332,9 @@
   /// graph. Runs in series — N small Argon2-free decrypts, fine for the
   /// realistic sizes we care about.
   async function scanAllNotes() {
-    if (!vault.masterKey) throw new Error('vault locked');
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
+      throw new Error('vault locked');
+    }
     // items.list in active view excludes trash already
     const todo = items.list.filter((n) => n.type === 'note');
     let done = 0;
@@ -347,8 +345,7 @@
           items.setDecryptedBody(summary.id, '');
           continue;
         }
-        const ik = openSeal(fromBase64(full.wrapped_item_key), vault.masterKey);
-        const body = utf8Decode(openSeal(fromBase64(full.encrypted_body), ik));
+        const body = decryptItemBody(full, vault.masterKey, vault.publicKey, vault.privateKey);
         items.setDecryptedBody(summary.id, body);
       } catch (err) {
         console.warn('scan: failed to decrypt', summary.id, err);
@@ -362,23 +359,26 @@
   /// template's body, re-encrypts under a fresh per-item key for the new
   /// note, ships it.
   async function newFromTemplate(templateId: string) {
-    if (!vault.masterKey) throw new Error('vault locked');
-    const source = await api.getItem(templateId);
-    let body = '';
-    if (source.encrypted_body && source.wrapped_item_key) {
-      const ik = openSeal(fromBase64(source.wrapped_item_key), vault.masterKey);
-      body = utf8Decode(openSeal(fromBase64(source.encrypted_body), ik));
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
+      throw new Error('vault locked');
     }
-    const itemKey = generateItemKey();
-    const encryptedBody = seal(utf8Encode(body), itemKey);
-    const wrappedItemKey = seal(itemKey, vault.masterKey);
+    const source = await api.getItem(templateId);
+    const body = decryptItemBody(source, vault.masterKey, vault.publicKey, vault.privateKey);
+    const targetSpaceId = spaces.activeId ?? spaces.personal()?.id ?? '';
+    const wrap = await encryptBodyForSpace({
+      body,
+      spaceId: targetSpaceId,
+      masterKey: vault.masterKey,
+      publicKey: vault.publicKey,
+      privateKey: vault.privateKey
+    });
     const created = await api.createItem({
       type: 'note',
       title: `Untitled (from ${source.title})`,
-      encrypted_body: toBase64(encryptedBody),
-      wrapped_item_key: toBase64(wrappedItemKey),
+      ...wrap,
       tags: source.tags.filter((t) => t !== 'template'),
-      path: '/'
+      path: '/',
+      space_id: targetSpaceId || undefined
     });
     items.upsert(created);
     await goto(`/items/${created.id}`);

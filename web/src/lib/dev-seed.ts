@@ -3,8 +3,9 @@
 // only caller is gated on import.meta.env.DEV.
 
 import { api, type ItemType } from './api';
-import { generateItemKey, seal, toBase64, utf8Encode } from './crypto';
+import { encryptBodyForSpace } from './itemCrypto';
 import { items } from './items.svelte';
+import { spaces } from './spaces.svelte';
 import { vault } from './vault.svelte';
 
 interface NoteSpec {
@@ -241,16 +242,22 @@ export async function seedDemoData(): Promise<{
     }
     const bodyText =
       spec.type === 'note' ? spec.body : JSON.stringify(spec.payload);
-    const itemKey = generateItemKey();
-    const encryptedBody = seal(utf8Encode(bodyText), itemKey);
-    const wrappedItemKey = seal(itemKey, vault.masterKey);
+    if (!vault.publicKey || !vault.privateKey) throw new Error('vault locked');
+    const targetSpaceId = spaces.activeId ?? spaces.personal()?.id ?? '';
+    const wrap = await encryptBodyForSpace({
+      body: bodyText,
+      spaceId: targetSpaceId,
+      masterKey: vault.masterKey,
+      publicKey: vault.publicKey,
+      privateKey: vault.privateKey
+    });
     const item = await api.createItem({
       type: spec.type as ItemType,
       title: spec.title,
       tags: spec.tags,
       path: spec.path,
-      encrypted_body: toBase64(encryptedBody),
-      wrapped_item_key: toBase64(wrappedItemKey)
+      ...wrap,
+      space_id: targetSpaceId || undefined
     });
     items.upsert(item);
     created++;

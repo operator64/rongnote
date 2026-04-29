@@ -119,6 +119,29 @@ export function open(combined: Uint8Array, key: Uint8Array): Uint8Array {
   return sodium.crypto_secretbox_open_easy(ct, nonce, key);
 }
 
+// --- Anonymous public-key encryption (libsodium crypto_box_seal). Used to
+// wrap per-item keys for team-space members: knowledge of a member's pubkey
+// is sufficient to share an item key with them; only the holder of their
+// privkey can read it back.
+
+/// Encrypt `plaintext` to `recipientPublicKey`. Returns the sealed blob
+/// (ephemeral pubkey || ciphertext) as libsodium produces.
+export function boxSeal(plaintext: Uint8Array, recipientPublicKey: Uint8Array): Uint8Array {
+  if (recipientPublicKey.length !== KEY_LEN) {
+    throw new Error(`recipient pubkey must be ${KEY_LEN} bytes`);
+  }
+  return sodium.crypto_box_seal(plaintext, recipientPublicKey);
+}
+
+/// Decrypt a `boxSeal` blob with our own keypair.
+export function boxOpen(
+  sealed: Uint8Array,
+  publicKey: Uint8Array,
+  privateKey: Uint8Array
+): Uint8Array {
+  return sodium.crypto_box_seal_open(sealed, publicKey, privateKey);
+}
+
 // --- Recovery code: 15 random bytes -> 24 base32 chars, dashed every 4 ---
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';

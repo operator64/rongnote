@@ -45,11 +45,11 @@
   let previewText = $state('');
 
   function safeDecryptMeta(it: Item): FileMeta {
-    if (!vault.masterKey) {
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
       return { filename: it.title, mime: 'application/octet-stream', size: 0 };
     }
     try {
-      return decryptFileMeta(it, vault.masterKey);
+      return decryptFileMeta(it, vault.masterKey, vault.publicKey, vault.privateKey);
     } catch {
       return { filename: it.title, mime: 'application/octet-stream', size: 0 };
     }
@@ -97,14 +97,14 @@
   });
 
   async function loadPreview() {
-    if (!vault.masterKey) {
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
       previewError = 'vault locked';
       return;
     }
     previewLoading = true;
     previewError = '';
     try {
-      const bytes = await downloadFileBytes(item, vault.masterKey);
+      const bytes = await downloadFileBytes(item, vault.masterKey, vault.publicKey, vault.privateKey);
       if (previewKind === 'text') {
         previewText = new TextDecoder().decode(bytes);
       } else {
@@ -119,12 +119,12 @@
   }
 
   async function downloadAndSave() {
-    if (!vault.masterKey) {
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
       error = 'vault locked';
       return;
     }
     try {
-      const bytes = await downloadFileBytes(item, vault.masterKey);
+      const bytes = await downloadFileBytes(item, vault.masterKey, vault.publicKey, vault.privateKey);
       const blob = new Blob([bytes as BlobPart], { type: meta.mime });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

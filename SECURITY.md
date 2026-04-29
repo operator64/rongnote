@@ -46,7 +46,8 @@ What we do **not** defend against:
 | Argon2id (default params) | `argon2` crate | server-side hash of `auth_hash` |
 | XSalsa20-Poly1305 | libsodium `crypto_secretbox_easy` | item bodies + key wrapping |
 | BLAKE2b keyed (32-byte output) | libsodium `crypto_generichash` | auth_hash + passkey-KEK derivation |
-| X25519 keypair | libsodium `crypto_box_keypair` | reserved for v0.9 team-share sealing |
+| X25519 keypair | libsodium `crypto_box_keypair` | per-member item-key wraps in team spaces |
+| crypto_box_seal (XSalsa20-Poly1305 + ephemeral X25519) | libsodium `crypto_box_seal` | sealed-box wraps in `item_member_keys` |
 | HMAC-SHA1 | Web Crypto | TOTP (RFC 6238) |
 | WebAuthn PRF extension | browser + authenticator | passkey-derived KEK |
 | SHA-256 | sha2 crate | file blob content addressing |
@@ -112,7 +113,8 @@ realistic data volumes.
 | `items.tags`, `items.path` | yes |
 | `items.type`, timestamps, `items.due_at`, `items.done` | yes |
 | `items.encrypted_body` | **ciphertext** |
-| `items.wrapped_item_key` | **ciphertext** |
+| `items.wrapped_item_key` | **ciphertext** (personal space; NULL for team space) |
+| `item_member_keys.sealed_item_key` | **ciphertext** (team space, one per member) |
 | `items.blob_sha256` | yes (hash of ciphertext, doesn't leak content) |
 | `files_blobs/*` (on disk) | **ciphertext** |
 | `passkeys.credential` (WebAuthn) | yes (public credential) |
@@ -254,6 +256,69 @@ Out of scope (yet): file shares (re-encrypting a multi-MB blob client-side
 needs streaming), passphrase-locked shares (additional KEK around the
 share_key in the URL), audit of share-recipient access (we record creation
 and increment a counter per fetch but don't tie counts to identities).
+
+## Team spaces
+
+A space holds items shared between members. Personal spaces have a single
+owner-member; team spaces have an owner plus invited editors/viewers.
+
+Items in a personal space follow the original scheme: `wrapped_item_key`
+on the item row is the per-item key encrypted under the user's
+`master_key` (XSalsa20-Poly1305).
+
+Items in a team space use `crypto_box_seal` (anonymous public-key
+encryption — ephemeral X25519 sender + recipient's pubkey, with
+XSalsa20-Poly1305 for the inner ciphertext). For each item, the per-item
+key is sealed once per current member to that member's pubkey:
+
+```
+item_member_keys (item_id, user_id, sealed_item_key)
+sealed_item_key = crypto_box_seal(item_key, member.public_key)
+```
+
+`items.wrapped_item_key` is NULL on the row; the per-member wrap lives
+in `item_member_keys`. On read, the server returns the *caller's* sealed
+wrap in the response's `wrapped_item_key` field, with a `key_wrap`
+discriminator (`'master'` or `'sealed'`) so the client knows which
+decryption to use.
+
+Item-key rotation differs by space kind:
+- personal: a new `item_key` is generated on every body save (defence
+  in depth, no version-history impact since the per-version
+  `wrapped_item_key` is captured in the snapshot).
+- team: the `item_key` is **reused** across saves. Rotating would mean
+  re-sealing for every member on every save AND snapshotting per-member
+  wraps in `item_versions`. We accept the simpler model.
+
+### Member invite
+
+Inviting an existing user to a team space is one atomic call:
+
+```
+inviter client                                  server
+   ── POST /spaces/lookup_user (email) ─────►
+                                              ◄── {id, public_key}
+   ─ for each item in space:
+       fetch full item, unwrap own sealed wrap → item_key
+       sealed_for_invitee = box_seal(item_key, invitee.pubkey)
+   ── POST /spaces/<id>/members ────────────►
+        {email, role, item_keys:[{item_id, sealed_item_key},...]}
+                                              ─ INSERT memberships
+                                              ─ INSERT item_member_keys (one per item)
+                                                  in same transaction
+                                              ◄── {member}
+```
+
+A failed re-wrap aborts the whole transaction → membership and key
+wraps either both apply or neither does.
+
+### Member removal
+
+`DELETE /spaces/<id>/members/<user_id>` deletes the user's wraps from
+`item_member_keys` for every item in the space, then deletes the
+membership row. Removed members cannot decrypt anything new; whatever
+they cached locally before removal is theirs forever (this is true of
+any system that hands out plaintext to authorized clients).
 
 ## Audit log
 

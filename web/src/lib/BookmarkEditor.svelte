@@ -1,15 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { api, type Item } from '$lib/api';
-  import {
-    fromBase64,
-    generateItemKey,
-    open as openSeal,
-    seal,
-    toBase64,
-    utf8Decode,
-    utf8Encode
-  } from '$lib/crypto';
+  import { decryptItemBody, encryptBodyForSpace } from '$lib/itemCrypto';
   import {
     formatTagInput,
     items,
@@ -62,11 +54,10 @@
 
   function decryptPayload(it: Item): BookmarkPayload {
     if (!it.encrypted_body || !it.wrapped_item_key) return emptyPayload();
-    if (!vault.masterKey) return emptyPayload();
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) return emptyPayload();
     try {
-      const itemKey = openSeal(fromBase64(it.wrapped_item_key), vault.masterKey);
-      const bytes = openSeal(fromBase64(it.encrypted_body), itemKey);
-      const parsed = JSON.parse(utf8Decode(bytes)) as Partial<BookmarkPayload>;
+      const text = decryptItemBody(it, vault.masterKey, vault.publicKey, vault.privateKey);
+      const parsed = JSON.parse(text) as Partial<BookmarkPayload>;
       return { ...emptyPayload(), ...parsed };
     } catch {
       return emptyPayload();
@@ -93,16 +84,21 @@
     const pathSnap = normalizePath(pathInput);
     dirty = false;
     try {
-      const itemKey = generateItemKey();
-      const encryptedBody = seal(utf8Encode(payloadSnap), itemKey);
-      const wrappedItemKey = seal(itemKey, vault.masterKey);
+      if (!vault.publicKey || !vault.privateKey) throw new Error('vault locked');
+      const wrap = await encryptBodyForSpace({
+        body: payloadSnap,
+        spaceId: item.space_id,
+        masterKey: vault.masterKey,
+        publicKey: vault.publicKey,
+        privateKey: vault.privateKey,
+        item
+      });
       const updated = await api.updateItem(item.id, {
         title: titleSnap,
         tags: tagsSnap,
         path: pathSnap,
         update_body: true,
-        encrypted_body: toBase64(encryptedBody),
-        wrapped_item_key: toBase64(wrappedItemKey)
+        ...wrap
       });
       item = updated;
       lastSavedAt = new Date(updated.updated_at);

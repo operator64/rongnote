@@ -4,7 +4,10 @@
   import { page } from '$app/stores';
   import { Plus, Trash2 } from '@lucide/svelte';
   import { api, ApiError, type Member, type Space } from '$lib/api';
+  import { boxSeal, fromBase64, toBase64 } from '$lib/crypto';
+  import { unwrapItemKey } from '$lib/itemCrypto';
   import { spaces } from '$lib/spaces.svelte';
+  import { vault } from '$lib/vault.svelte';
 
   let spaceId = $derived($page.params.id as string);
   let space = $state<Space | null>(null);
@@ -43,10 +46,42 @@
   async function invite() {
     const email = inviteEmail.trim().toLowerCase();
     if (!email) return;
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
+      error = 'vault locked';
+      return;
+    }
     busy = true;
     error = '';
     try {
-      const m = await api.addMember(spaceId, email, inviteRole);
+      // Look up the invitee's pubkey first, then re-wrap every existing item
+      // in this space for them. The wraps + the membership insert ship in
+      // one atomic call so the new member can decrypt from the moment they
+      // appear in the member list.
+      const target = await api.lookupUser(email);
+      const targetPubKey = fromBase64(target.public_key);
+
+      const summaries = await api.listItems({ space_id: spaceId });
+      const itemKeys: { item_id: string; sealed_item_key: string }[] = [];
+      for (const s of summaries) {
+        const full = await api.getItem(s.id);
+        if (!full.encrypted_body || !full.wrapped_item_key) continue;
+        try {
+          const itemKey = unwrapItemKey(
+            full,
+            vault.masterKey,
+            vault.publicKey,
+            vault.privateKey
+          );
+          itemKeys.push({
+            item_id: full.id,
+            sealed_item_key: toBase64(boxSeal(itemKey, targetPubKey))
+          });
+        } catch (err) {
+          console.warn('skip rewrap of', s.id, err);
+        }
+      }
+
+      const m = await api.addMember(spaceId, email, inviteRole, itemKeys);
       members = [...members, m];
       if (space) {
         space = { ...space, member_count: space.member_count + 1 };
@@ -205,8 +240,9 @@
   {/if}
 
   <p class="hint muted">
-    Phase A: members can be managed but item content is not yet shared. Phase B will seal each
-    item's key per member.
+    Inviting re-wraps every item key for the new member with their X25519 public key. Removing a
+    member deletes their wraps server-side; they keep whatever they already decrypted but get
+    nothing new.
   </p>
 </div>
 

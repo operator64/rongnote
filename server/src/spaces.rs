@@ -69,6 +69,20 @@ pub struct AddMemberBody {
     email: String,
     /// 'editor' | 'viewer'. Owners are set by the create-space path only.
     role: String,
+    /// Optional: sealed-box wraps of every existing item key for the new
+    /// member. Required when the space already contains items (the inviter
+    /// has computed the wraps from items they themselves can decrypt).
+    /// Each entry is the wrap of one item's `item_key` to the invitee's
+    /// public key, used to populate `item_member_keys`.
+    #[serde(default)]
+    item_keys: Vec<NewMemberItemKey>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewMemberItemKey {
+    item_id: Uuid,
+    #[serde(with = "crate::b64")]
+    sealed_item_key: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -310,6 +324,10 @@ async fn add_member(
     let (target_user_id, public_key, _) =
         lookup.ok_or_else(|| AppError::NotFound)?;
 
+    // Bundle membership insert + item-key re-wraps in one transaction so a
+    // partial state (member added but not yet able to decrypt) is impossible.
+    let mut tx = state.pool.begin().await?;
+
     let inserted: Option<(OffsetDateTime,)> = sqlx::query_as(
         r#"
         INSERT INTO memberships (user_id, space_id, role)
@@ -321,11 +339,46 @@ async fn add_member(
     .bind(target_user_id)
     .bind(id)
     .bind(&body.role)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?;
     let joined_at = inserted
         .map(|r| r.0)
         .ok_or_else(|| AppError::Conflict("user is already a member".into()))?;
+
+    // Re-wraps: every supplied item_id must belong to this space and have a
+    // body (encrypted_body IS NOT NULL, signalling there's a key to share).
+    if !body.item_keys.is_empty() {
+        let space_items: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM items WHERE space_id = $1 AND encrypted_body IS NOT NULL",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let allowed: std::collections::HashSet<Uuid> =
+            space_items.into_iter().map(|r| r.0).collect();
+        for k in &body.item_keys {
+            if !allowed.contains(&k.item_id) {
+                return Err(AppError::BadRequest(format!(
+                    "item_keys: item {} not in this space or has no body",
+                    k.item_id
+                )));
+            }
+            sqlx::query(
+                r#"
+                INSERT INTO item_member_keys (item_id, user_id, sealed_item_key)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (item_id, user_id) DO NOTHING
+                "#,
+            )
+            .bind(k.item_id)
+            .bind(target_user_id)
+            .bind(&k.sealed_item_key)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    tx.commit().await?;
 
     crate::audit::record(
         &state.pool,
@@ -333,7 +386,11 @@ async fn add_member(
         Some(id),
         None,
         "space.invite",
-        Some(serde_json::json!({"invited_email": email, "role": body.role})),
+        Some(serde_json::json!({
+            "invited_email": email,
+            "role": body.role,
+            "rewrapped_items": body.item_keys.len(),
+        })),
     )
     .await;
 

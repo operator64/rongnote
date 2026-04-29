@@ -3,11 +3,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api, ApiError, type VersionSummary } from '$lib/api';
-  import {
-    fromBase64,
-    open as openSeal,
-    utf8Decode
-  } from '$lib/crypto';
+  import { fromBase64, open as openSeal, utf8Decode } from '$lib/crypto';
+  import { unwrapItemKey } from '$lib/itemCrypto';
   import { items } from '$lib/items.svelte';
   import { vault } from '$lib/vault.svelte';
 
@@ -16,6 +13,10 @@
   let loading = $state(true);
   let error = $state('');
   let busy = $state(false);
+
+  /// Cached current item_key — for team-space items the version snapshots
+  /// share the active item_key (we never rotate), so unwrap once for all.
+  let teamItemKey = $state<Uint8Array | null>(null);
 
   /// Decrypted previews keyed by version number.
   let previews = $state<Record<number, string>>({});
@@ -29,6 +30,18 @@
     error = '';
     try {
       versions = await api.listVersions(id);
+      // Pre-load the current item so we have a sealed wrap for team spaces.
+      if (vault.masterKey && vault.publicKey && vault.privateKey) {
+        const current = await api.getItem(id);
+        if (current.key_wrap === 'sealed' && current.wrapped_item_key) {
+          teamItemKey = unwrapItemKey(
+            current,
+            vault.masterKey,
+            vault.publicKey,
+            vault.privateKey
+          );
+        }
+      }
     } catch (err) {
       error = err instanceof ApiError ? err.message : 'load failed';
     } finally {
@@ -50,9 +63,19 @@
     try {
       const detail = await api.getVersion(id!, v.version);
       let text = '(empty)';
-      if (detail.encrypted_body && detail.wrapped_item_key) {
-        const ik = openSeal(fromBase64(detail.wrapped_item_key), vault.masterKey);
-        text = utf8Decode(openSeal(fromBase64(detail.encrypted_body), ik));
+      if (detail.encrypted_body) {
+        let ik: Uint8Array | null = null;
+        if (detail.wrapped_item_key) {
+          // Personal-space snapshot: master-key wrap stored on the version row.
+          ik = openSeal(fromBase64(detail.wrapped_item_key), vault.masterKey);
+        } else if (teamItemKey) {
+          ik = teamItemKey;
+        }
+        if (ik) {
+          text = utf8Decode(openSeal(fromBase64(detail.encrypted_body), ik));
+        } else {
+          text = '(no key available — cannot decrypt this version)';
+        }
       }
       previews = { ...previews, [v.version]: text };
     } catch (err) {

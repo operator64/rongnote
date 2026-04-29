@@ -89,8 +89,18 @@ break:
 3. **`auth_hash` = BLAKE2b-keyed(master_key, "rongnote-auth-v1")** — what
    the server sees during login. Server stores Argon2id of that.
 
-The X25519 keypair is reserved for v0.9 team-share sealing. Currently
-unused at runtime; just generated on register and stored.
+The X25519 keypair (generated on register, wrapped private in
+`encrypted_private_key`) wraps per-item keys for each member of a team
+space (`crypto_box_seal` → `item_member_keys`). Personal-space items
+keep using `master_key` secretbox wraps. Server returns whichever wrap
+the caller can use in `item.wrapped_item_key`, with
+`key_wrap='master'|'sealed'` as the discriminator. See
+`web/src/lib/itemCrypto.ts` for the single decision point — every
+editor goes through `encryptBodyForSpace` / `decryptItemBody`.
+
+Item-key rotation differs by space: personal rotates on every save, team
+**reuses** the existing key (otherwise version snapshots become
+undecryptable, since `item_member_keys` only stores the *current* wrap).
 
 ## Dev workflow
 
@@ -136,6 +146,7 @@ historical cases:
 - 0010 — share_links table
 - 0011 — item_versions table
 - 0012 — extend `items.type` CHECK to include `'list'`
+- 0013 — `item_member_keys` table for sealed-box per-member wraps in team spaces
 
 Going forward, never TRUNCATE in a migration. Add columns, backfill,
 deprecate. **Use `--` for SQL comments**, not Rust-style `///` — the latter

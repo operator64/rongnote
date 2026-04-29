@@ -132,14 +132,21 @@ async fn export(
         OffsetDateTime,
         Option<OffsetDateTime>,
     );
+    // For team-space items the master-key wrap is NULL on the item row; the
+    // user's sealed wrap lives in item_member_keys. COALESCE so the export
+    // contains *whatever the calling user can decrypt*.
     let item_rows: Vec<ItemRow> = sqlx::query_as(
         r#"
         SELECT i.id, i.space_id, s.name, s.kind, i.type, i.title, i.tags, i.path,
-               i.encrypted_body, i.wrapped_item_key, i.blob_sha256,
+               i.encrypted_body,
+               COALESCE(i.wrapped_item_key, mk.sealed_item_key) AS wrapped_item_key,
+               i.blob_sha256,
                i.due_at, i.done, i.created_at, i.updated_at, i.deleted_at
           FROM items i
           JOIN spaces s ON s.id = i.space_id
           JOIN memberships m ON m.space_id = s.id
+          LEFT JOIN item_member_keys mk
+                 ON mk.item_id = i.id AND mk.user_id = $1
          WHERE m.user_id = $1
          ORDER BY i.created_at
         "#,

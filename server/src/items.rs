@@ -67,6 +67,12 @@ pub struct ItemSummary {
 /// Server is opaque on encrypted_body / wrapped_item_key. Title, tags, path,
 /// type stay plaintext (search index, sidebar grouping). For type='file',
 /// blob_sha256 points at the encrypted bytes on disk.
+///
+/// `wrapped_item_key` is overloaded: for personal-space items it's the
+/// item_key wrapped under the user's master_key (secretbox). For team-space
+/// items, the get/create/update handlers populate it with the caller's
+/// sealed-box wrap from `item_member_keys`. `key_wrap` tells the client
+/// which decryption to use.
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct ItemView {
     id: Uuid,
@@ -81,6 +87,10 @@ pub struct ItemView {
     encrypted_body: Option<Vec<u8>>,
     #[serde(with = "crate::b64::option")]
     wrapped_item_key: Option<Vec<u8>>,
+    /// 'master' (personal space, secretbox), 'sealed' (team space, sealed_box),
+    /// or null when the item has no body yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_wrap: Option<String>,
     /// Hex-encoded over the wire. Only set for type='file'.
     #[serde(default, with = "crate::b64::hex_option", skip_serializing_if = "Option::is_none")]
     blob_sha256: Option<Vec<u8>>,
@@ -119,6 +129,15 @@ impl ItemView {
     }
 }
 
+/// Sealed-box wrap of an item key for one specific member of a team space.
+/// `sealed_item_key` = libsodium crypto_box_seal(item_key, member_public_key).
+#[derive(Debug, Deserialize)]
+pub struct MemberKeyInput {
+    user_id: Uuid,
+    #[serde(with = "crate::b64")]
+    sealed_item_key: Vec<u8>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateItemBody {
     #[serde(default = "default_type", rename = "type")]
@@ -128,6 +147,10 @@ pub struct CreateItemBody {
     encrypted_body: Option<Vec<u8>>,
     #[serde(default, with = "crate::b64::option")]
     wrapped_item_key: Option<Vec<u8>>,
+    /// Required for team-space items when encrypted_body is set. Must contain
+    /// one entry per current member of the space (caller included).
+    #[serde(default)]
+    member_keys: Option<Vec<MemberKeyInput>>,
     #[serde(default, with = "crate::b64::hex_option")]
     blob_sha256: Option<Vec<u8>>,
     #[serde(default)]
@@ -149,6 +172,10 @@ pub struct UpdateItemBody {
     encrypted_body: Option<Vec<u8>>,
     #[serde(default, with = "crate::b64::option", skip_serializing_if = "Option::is_none")]
     wrapped_item_key: Option<Vec<u8>>,
+    /// For team-space body updates: a fresh per-member wrap of the (rotated)
+    /// item_key. Required when update_body=true on a team-space item.
+    #[serde(default)]
+    member_keys: Option<Vec<MemberKeyInput>>,
     #[serde(default)]
     update_body: bool,
     tags: Option<Vec<String>>,
@@ -239,6 +266,81 @@ async fn assert_member(
     row.map(|r| r.0).ok_or(AppError::Forbidden)
 }
 
+async fn space_kind(state: &Arc<AppState>, space_id: Uuid) -> AppResult<String> {
+    let row: (String,) = sqlx::query_as("SELECT kind FROM spaces WHERE id = $1")
+        .bind(space_id)
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(row.0)
+}
+
+/// All read paths route through this so the (item, current user) pair gets
+/// the right wrap: master-key wrap for personal-space items, sealed-box
+/// wrap from item_member_keys for team-space items.
+const ITEM_VIEW_SELECT: &str = r#"
+    SELECT i.id, i.space_id, i.type, i.title, i.tags, i.path,
+           i.encrypted_body,
+           COALESCE(i.wrapped_item_key, mk.sealed_item_key) AS wrapped_item_key,
+           CASE
+             WHEN i.wrapped_item_key IS NOT NULL THEN 'master'
+             WHEN mk.sealed_item_key IS NOT NULL THEN 'sealed'
+             ELSE NULL
+           END AS key_wrap,
+           i.blob_sha256,
+           i.created_at, i.updated_at, i.deleted_at,
+           i.due_at, i.done, i.pinned
+      FROM items i
+      JOIN memberships m ON m.space_id = i.space_id
+      LEFT JOIN item_member_keys mk
+             ON mk.item_id = i.id AND mk.user_id = $2
+"#;
+
+async fn load_item_for_user(
+    state: &Arc<AppState>,
+    user_id: Uuid,
+    item_id: Uuid,
+) -> AppResult<Option<ItemView>> {
+    let q = format!("{ITEM_VIEW_SELECT} WHERE i.id = $1 AND m.user_id = $2");
+    let row = sqlx::query_as::<_, ItemView>(&q)
+        .bind(item_id)
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await?;
+    Ok(row)
+}
+
+/// Verify that the supplied member_keys cover every current member of the
+/// space exactly once. Returns Ok with Vec ready for INSERT, or BadRequest.
+async fn validate_member_keys(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    space_id: Uuid,
+    keys: &[MemberKeyInput],
+) -> AppResult<()> {
+    let members: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT user_id FROM memberships WHERE space_id = $1",
+    )
+    .bind(space_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut expected: std::collections::HashSet<Uuid> =
+        members.into_iter().map(|r| r.0).collect();
+    for k in keys {
+        if !expected.remove(&k.user_id) {
+            return Err(AppError::BadRequest(format!(
+                "member_keys: user {} is not a current member of the space",
+                k.user_id
+            )));
+        }
+    }
+    if !expected.is_empty() {
+        return Err(AppError::BadRequest(
+            "member_keys must cover every current member of the space".into(),
+        ));
+    }
+    Ok(())
+}
+
 // --- Handlers ---
 
 async fn list(
@@ -277,11 +379,6 @@ async fn create(
         return Err(AppError::BadRequest("title required".into()));
     }
     validate_type(&body.type_)?;
-    if body.encrypted_body.is_some() != body.wrapped_item_key.is_some() {
-        return Err(AppError::BadRequest(
-            "encrypted_body and wrapped_item_key must be set together".into(),
-        ));
-    }
 
     if body.blob_sha256.is_some() && body.type_ != "file" {
         return Err(AppError::BadRequest(
@@ -299,6 +396,43 @@ async fn create(
     if role == "viewer" {
         return Err(AppError::Forbidden);
     }
+    let kind = space_kind(&state, space_id).await?;
+    let is_team = kind == "team";
+
+    // Wrap-shape rules differ by space kind:
+    //   personal: encrypted_body + wrapped_item_key (master-key secretbox)
+    //   team:     encrypted_body + member_keys (sealed_box per member)
+    let has_body = body.encrypted_body.is_some();
+    let stored_wrap: Option<&[u8]> = if is_team {
+        if body.wrapped_item_key.is_some() {
+            return Err(AppError::BadRequest(
+                "team-space items use member_keys, not wrapped_item_key".into(),
+            ));
+        }
+        if has_body && body.member_keys.as_ref().map_or(true, |v| v.is_empty()) {
+            return Err(AppError::BadRequest(
+                "team-space items with encrypted_body require member_keys".into(),
+            ));
+        }
+        if !has_body && body.member_keys.is_some() {
+            return Err(AppError::BadRequest(
+                "member_keys without encrypted_body".into(),
+            ));
+        }
+        None
+    } else {
+        if body.member_keys.is_some() {
+            return Err(AppError::BadRequest(
+                "member_keys not allowed on personal-space items".into(),
+            ));
+        }
+        if has_body != body.wrapped_item_key.is_some() {
+            return Err(AppError::BadRequest(
+                "encrypted_body and wrapped_item_key must be set together".into(),
+            ));
+        }
+        body.wrapped_item_key.as_deref()
+    };
 
     let mut tx = state.pool.begin().await?;
 
@@ -316,23 +450,21 @@ async fn create(
         }
     }
 
-    let item = sqlx::query_as::<_, ItemView>(
+    let inserted_id: (Uuid,) = sqlx::query_as(
         r#"
         INSERT INTO items (
             space_id, type, title, encrypted_body, wrapped_item_key, blob_sha256,
             tags, path, created_by, due_at, done
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        RETURNING id, space_id, type, title, tags, path,
-                  encrypted_body, wrapped_item_key, blob_sha256,
-                  created_at, updated_at, deleted_at, due_at, done, pinned
+        RETURNING id
         "#,
     )
     .bind(space_id)
     .bind(&body.type_)
     .bind(body.title.trim())
-    .bind(&body.encrypted_body)
-    .bind(&body.wrapped_item_key)
+    .bind(body.encrypted_body.as_deref())
+    .bind(stored_wrap)
     .bind(&body.blob_sha256)
     .bind(&body.tags)
     .bind(&body.path)
@@ -342,7 +474,29 @@ async fn create(
     .fetch_one(&mut *tx)
     .await?;
 
+    if is_team && has_body {
+        let keys = body.member_keys.as_deref().unwrap_or(&[]);
+        validate_member_keys(&mut tx, space_id, keys).await?;
+        for k in keys {
+            sqlx::query(
+                r#"
+                INSERT INTO item_member_keys (item_id, user_id, sealed_item_key)
+                VALUES ($1, $2, $3)
+                "#,
+            )
+            .bind(inserted_id.0)
+            .bind(k.user_id)
+            .bind(&k.sealed_item_key)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
     tx.commit().await?;
+
+    let item = load_item_for_user(&state, user.user_id, inserted_id.0)
+        .await?
+        .ok_or_else(|| AppError::Other(anyhow::anyhow!("item vanished after insert")))?;
     crate::audit::record_item(
         &state.pool,
         user.user_id,
@@ -360,21 +514,9 @@ async fn get_one(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ItemView>> {
-    let item = sqlx::query_as::<_, ItemView>(
-        r#"
-        SELECT i.id, i.space_id, i.type, i.title, i.tags, i.path,
-               i.encrypted_body, i.wrapped_item_key, i.blob_sha256,
-               i.created_at, i.updated_at, i.deleted_at, i.due_at, i.done, i.pinned
-          FROM items i
-          JOIN memberships m ON m.space_id = i.space_id
-         WHERE i.id = $1 AND m.user_id = $2
-        "#,
-    )
-    .bind(id)
-    .bind(user.user_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    let item = load_item_for_user(&state, user.user_id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     if item.type_str() == "secret" {
         crate::audit::record_item(
             &state.pool,
@@ -395,21 +537,9 @@ async fn update(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateItemBody>,
 ) -> AppResult<Json<ItemView>> {
-    let existing = sqlx::query_as::<_, ItemView>(
-        r#"
-        SELECT i.id, i.space_id, i.type, i.title, i.tags, i.path,
-               i.encrypted_body, i.wrapped_item_key, i.blob_sha256,
-               i.created_at, i.updated_at, i.deleted_at, i.due_at, i.done, i.pinned
-          FROM items i
-          JOIN memberships m ON m.space_id = i.space_id
-         WHERE i.id = $1 AND m.user_id = $2
-        "#,
-    )
-    .bind(id)
-    .bind(user.user_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    let existing = load_item_for_user(&state, user.user_id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     let role = assert_member(&state, &user, existing.space_id).await?;
     if role == "viewer" {
@@ -422,12 +552,46 @@ async fn update(
         ));
     }
 
-    if body.update_body
-        && body.encrypted_body.is_some() != body.wrapped_item_key.is_some()
-    {
-        return Err(AppError::BadRequest(
-            "encrypted_body and wrapped_item_key must be set together".into(),
-        ));
+    let kind = space_kind(&state, existing.space_id).await?;
+    let is_team = kind == "team";
+
+    // Body-update validation, branched on space kind.
+    //   personal: item_key is rotated each save, fresh wrapped_item_key
+    //             stored in items.wrapped_item_key.
+    //   team:     item_key is *reused* across saves (the client decrypts the
+    //             current sealed wrap, re-encrypts the body with the same
+    //             key). This keeps version-history snapshots decryptable
+    //             without snapshotting per-member key wraps. New member
+    //             wraps come in via the Phase C invite endpoint, not here.
+    if body.update_body {
+        if body.encrypted_body.is_none() {
+            return Err(AppError::BadRequest(
+                "update_body=true requires encrypted_body".into(),
+            ));
+        }
+        if is_team {
+            if body.wrapped_item_key.is_some() {
+                return Err(AppError::BadRequest(
+                    "team-space items use the existing item_member_keys; do not send wrapped_item_key on update".into(),
+                ));
+            }
+            if body.member_keys.is_some() {
+                return Err(AppError::BadRequest(
+                    "team-space body update reuses existing member keys; do not send member_keys".into(),
+                ));
+            }
+        } else {
+            if body.member_keys.is_some() {
+                return Err(AppError::BadRequest(
+                    "member_keys not allowed on personal-space items".into(),
+                ));
+            }
+            if body.wrapped_item_key.is_none() {
+                return Err(AppError::BadRequest(
+                    "personal-space body update requires wrapped_item_key".into(),
+                ));
+            }
+        }
     }
 
     // Snapshot the current body before overwriting. Only when the body
@@ -437,7 +601,18 @@ async fn update(
         snapshot_version(&state.pool, &existing, user.user_id).await.ok();
     }
 
-    let updated = sqlx::query_as::<_, ItemView>(
+    let mut tx = state.pool.begin().await?;
+
+    let stored_wrap: Option<&[u8]> = if body.update_body && !is_team {
+        body.wrapped_item_key.as_deref()
+    } else if body.update_body && is_team {
+        None // team items keep wrapped_item_key NULL
+    } else {
+        // No body update: leave wrapped_item_key untouched (CASE WHEN false branch).
+        None
+    };
+
+    sqlx::query(
         r#"
         UPDATE items
            SET title             = COALESCE($2, title),
@@ -450,24 +625,30 @@ async fn update(
                pinned            = COALESCE($11, pinned),
                updated_at        = NOW()
          WHERE id = $1
-        RETURNING id, space_id, type, title, tags, path,
-                  encrypted_body, wrapped_item_key, blob_sha256,
-                  created_at, updated_at, deleted_at, due_at, done, pinned
         "#,
     )
     .bind(id)
     .bind(body.title.as_deref().map(str::trim))
     .bind(body.update_body)
     .bind(body.encrypted_body.as_deref())
-    .bind(body.wrapped_item_key.as_deref())
+    .bind(stored_wrap)
     .bind(body.tags.as_deref())
     .bind(body.path.as_deref())
     .bind(body.update_due_at)
     .bind(body.due_at)
     .bind(body.done)
     .bind(body.pinned)
-    .fetch_one(&state.pool)
+    .execute(&mut *tx)
     .await?;
+
+    // Team-space body updates: nothing to do here — the existing rows in
+    // item_member_keys still wrap the unchanged item_key.
+
+    tx.commit().await?;
+
+    let updated = load_item_for_user(&state, user.user_id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     crate::audit::record_item(
         &state.pool,
         user.user_id,
@@ -602,21 +783,12 @@ async fn restore_version(
     Path((id, version)): Path<(Uuid, i32)>,
 ) -> AppResult<Json<ItemView>> {
     // Authz: load current item for the user; member of space.
-    let existing = sqlx::query_as::<_, ItemView>(
-        r#"
-        SELECT i.id, i.space_id, i.type, i.title, i.tags, i.path,
-               i.encrypted_body, i.wrapped_item_key, i.blob_sha256,
-               i.created_at, i.updated_at, i.deleted_at, i.due_at, i.done, i.pinned
-          FROM items i
-          JOIN memberships m ON m.space_id = i.space_id
-         WHERE i.id = $1 AND m.user_id = $2 AND i.deleted_at IS NULL
-        "#,
-    )
-    .bind(id)
-    .bind(user.user_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    let existing = load_item_for_user(&state, user.user_id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if existing.deleted_at.is_some() {
+        return Err(AppError::NotFound);
+    }
 
     // Snapshot current state before restoring (so the restore is itself
     // versioned + reversible).
@@ -635,7 +807,12 @@ async fn restore_version(
     .await?;
     let (snap_title, snap_body, snap_key) = snap.ok_or(AppError::NotFound)?;
 
-    let updated = sqlx::query_as::<_, ItemView>(
+    // For team-space items the snapshot's wrapped_item_key is NULL (item
+    // key wraps live in item_member_keys, not item_versions). We never
+    // rotate the item_key on snapshot/restore, so the active sealed wraps
+    // still match the restored body. Just don't overwrite wrapped_item_key
+    // back to NULL → write whatever the snapshot stored.
+    sqlx::query(
         r#"
         UPDATE items
            SET title             = $2,
@@ -643,17 +820,18 @@ async fn restore_version(
                wrapped_item_key  = $4,
                updated_at        = NOW()
          WHERE id = $1
-        RETURNING id, space_id, type, title, tags, path,
-                  encrypted_body, wrapped_item_key, blob_sha256,
-                  created_at, updated_at, deleted_at, due_at, done, pinned
         "#,
     )
     .bind(id)
     .bind(&snap_title)
     .bind(&snap_body)
     .bind(&snap_key)
-    .fetch_one(&state.pool)
+    .execute(&state.pool)
     .await?;
+
+    let updated = load_item_for_user(&state, user.user_id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     crate::audit::record_item(
         &state.pool,
@@ -775,20 +953,20 @@ async fn restore(
         return Err(AppError::Forbidden);
     }
 
-    let restored = sqlx::query_as::<_, ItemView>(
+    sqlx::query(
         r#"
         UPDATE items
            SET deleted_at = NULL,
                updated_at = NOW()
          WHERE id = $1
-        RETURNING id, space_id, type, title, tags, path,
-                  encrypted_body, wrapped_item_key, blob_sha256,
-                  created_at, updated_at, deleted_at, due_at, done, pinned
         "#,
     )
     .bind(id)
-    .fetch_one(&state.pool)
+    .execute(&state.pool)
     .await?;
+    let restored = load_item_for_user(&state, user.user_id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     crate::audit::record_item(
         &state.pool,
         user.user_id,
