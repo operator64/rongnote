@@ -65,6 +65,7 @@ export interface Item {
 export interface ListItemsOptions {
   type?: ItemType;
   trash?: boolean;
+  space_id?: string;
 }
 
 export class ApiError extends Error {
@@ -126,6 +127,7 @@ export interface CreateItemInput {
   path?: string;
   due_at?: string | null;
   done?: boolean;
+  space_id?: string;
 }
 
 export interface UploadBlobResponse {
@@ -173,6 +175,25 @@ export interface VersionDetail {
   encrypted_body: string | null;
   wrapped_item_key: string | null;
   created_at: string;
+}
+
+export interface Space {
+  id: string;
+  name: string;
+  kind: 'personal' | 'team';
+  owner_id: string;
+  role: 'owner' | 'editor' | 'viewer';
+  member_count: number;
+  created_at: string;
+}
+
+export interface Member {
+  user_id: string;
+  email: string;
+  role: 'owner' | 'editor' | 'viewer';
+  /// base64 public key for sealing item keys (Phase B)
+  public_key: string;
+  joined_at: string;
 }
 
 export interface AuditEntry {
@@ -253,6 +274,7 @@ export const api = {
     const params = new URLSearchParams();
     if (opts.type) params.set('type', opts.type);
     if (opts.trash) params.set('trash', 'true');
+    if (opts.space_id) params.set('space_id', opts.space_id);
     const qs = params.toString();
     return request<ItemSummary[]>('GET', `/api/v1/items${qs ? `?${qs}` : ''}`);
   },
@@ -293,6 +315,26 @@ export const api = {
 
   listAuditLog: (limit = 100) =>
     request<AuditEntry[]>('GET', `/api/v1/audit_log?limit=${limit}`),
+
+  listSpaces: () => request<Space[]>('GET', '/api/v1/spaces/'),
+  getSpace: (id: string) => request<Space>('GET', `/api/v1/spaces/${id}`),
+  createSpace: (name: string) =>
+    request<Space>('POST', '/api/v1/spaces/', { name }),
+  deleteSpace: (id: string) => request<void>('DELETE', `/api/v1/spaces/${id}`),
+  listMembers: (spaceId: string) =>
+    request<Member[]>('GET', `/api/v1/spaces/${spaceId}/members`),
+  addMember: (spaceId: string, email: string, role: 'editor' | 'viewer') =>
+    request<Member>('POST', `/api/v1/spaces/${spaceId}/members`, { email, role }),
+  setMemberRole: (spaceId: string, userId: string, role: 'editor' | 'viewer') =>
+    request<void>('PATCH', `/api/v1/spaces/${spaceId}/members/${userId}`, { role }),
+  removeMember: (spaceId: string, userId: string) =>
+    request<void>('DELETE', `/api/v1/spaces/${spaceId}/members/${userId}`),
+  lookupUser: (email: string) =>
+    request<{ id: string; email: string; public_key: string }>(
+      'POST',
+      '/api/v1/spaces/lookup_user',
+      { email }
+    ),
 
   createShare: (
     itemId: string,

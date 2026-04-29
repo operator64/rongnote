@@ -24,6 +24,7 @@ mod items;
 mod passkey;
 mod session;
 mod shares;
+mod spaces;
 mod static_assets;
 
 use config::Config;
@@ -67,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         .nest("/files", files::router())
         .nest("/audit_log", audit::router())
         .nest("/export", export::router())
+        .nest("/spaces", spaces::router())
         .merge(shares::router());
 
     let app = Router::new()

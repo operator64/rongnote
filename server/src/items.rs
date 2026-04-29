@@ -138,6 +138,8 @@ pub struct CreateItemBody {
     due_at: Option<time::Date>,
     #[serde(default)]
     done: bool,
+    /// Optional space target. Falls back to the user's personal space.
+    space_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +168,8 @@ pub struct ListQuery {
     type_: Option<String>,
     #[serde(default)]
     trash: bool,
+    /// Optional space filter. If absent, defaults to the user's personal space.
+    space_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,6 +205,26 @@ async fn resolve_default_space(state: &Arc<AppState>, user: &AuthUser) -> AppRes
     Ok(row.0)
 }
 
+/// Resolve the target space for a request: explicit space_id if the user
+/// is a member of it, else the personal space.
+async fn resolve_space(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    explicit: Option<Uuid>,
+) -> AppResult<Uuid> {
+    if let Some(id) = explicit {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT space_id FROM memberships WHERE user_id = $1 AND space_id = $2",
+        )
+        .bind(user.user_id)
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?;
+        return row.map(|r| r.0).ok_or(AppError::Forbidden);
+    }
+    resolve_default_space(state, user).await
+}
+
 async fn assert_member(
     state: &Arc<AppState>,
     user: &AuthUser,
@@ -222,7 +246,7 @@ async fn list(
     user: AuthUser,
     Query(q): Query<ListQuery>,
 ) -> AppResult<Json<Vec<ItemSummary>>> {
-    let space_id = resolve_default_space(&state, &user).await?;
+    let space_id = resolve_space(&state, &user, q.space_id).await?;
     if let Some(t) = &q.type_ {
         validate_type(t)?;
     }
@@ -270,7 +294,7 @@ async fn create(
         ));
     }
 
-    let space_id = resolve_default_space(&state, &user).await?;
+    let space_id = resolve_space(&state, &user, body.space_id).await?;
     let role = assert_member(&state, &user, space_id).await?;
     if role == "viewer" {
         return Err(AppError::Forbidden);

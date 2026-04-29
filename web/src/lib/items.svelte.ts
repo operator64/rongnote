@@ -1,4 +1,5 @@
 import { api, type Item, type ItemSummary, type ItemType } from './api';
+import { spaces } from './spaces.svelte';
 
 export interface ItemsFilter {
   type?: ItemType;
@@ -151,7 +152,10 @@ class ItemStore {
   async refresh() {
     this.loading = true;
     try {
-      this.list = await api.listItems({ trash: this.view === 'trash' });
+      this.list = await api.listItems({
+        trash: this.view === 'trash',
+        space_id: spaces.activeId ?? undefined
+      });
     } finally {
       this.loading = false;
     }

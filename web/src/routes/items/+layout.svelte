@@ -12,11 +12,21 @@
   import { items } from '$lib/items.svelte';
   import { prefs } from '$lib/prefs.svelte';
   import { session } from '$lib/session.svelte';
+  import { spaces } from '$lib/spaces.svelte';
   import { vault } from '$lib/vault.svelte';
 
   let { children } = $props();
 
-  onMount(() => items.refresh());
+  onMount(async () => {
+    await spaces.refresh();
+    await items.refresh();
+  });
+
+  // Re-fetch items whenever the active space changes.
+  $effect(() => {
+    void spaces.activeId;
+    if (spaces.activeId) items.refresh();
+  });
 
   let activeId = $derived($page.params?.id ?? null);
 

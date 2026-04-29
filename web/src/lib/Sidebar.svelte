@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { Home, Users } from '@lucide/svelte';
   import { type ItemType } from '$lib/api';
   import ItemIcon from '$lib/ItemIcon.svelte';
   import { items } from '$lib/items.svelte';
+  import { spaces } from '$lib/spaces.svelte';
 
   async function setAll() {
     if (items.view !== 'active') await items.setView('active');
@@ -22,12 +24,18 @@
   function setPath(path: string) {
     items.setFilter({ pathPrefix: path });
   }
+  function selectSpace(id: string) {
+    if (spaces.activeId === id) return;
+    spaces.setActive(id);
+    items.clearFilter();
+  }
 
   let activeType = $derived(items.filter.type);
   let activeTag = $derived(items.filter.tag);
   let activePath = $derived(items.filter.pathPrefix);
   let inTrash = $derived(items.view === 'trash');
   let isAllActive = $derived(items.view === 'active' && !items.hasActiveFilter);
+  let showSpaces = $derived(spaces.list.length > 1);
 
   function typeLabel(t: ItemType): string {
     return t === 'note' ? 'notes' : t + 's';
@@ -35,6 +43,27 @@
 </script>
 
 <aside class="sidebar">
+  {#if showSpaces}
+    <div class="section-head no-border">spaces</div>
+    {#each spaces.list as s (s.id)}
+      <button
+        class="row-btn"
+        class:active={spaces.activeId === s.id}
+        onclick={() => selectSpace(s.id)}
+        title={s.kind === 'team' ? `team · ${s.role}` : 'your personal space'}
+      >
+        {#if s.kind === 'personal'}
+          <Home size={14} />
+        {:else}
+          <Users size={14} />
+        {/if}
+        <span class="grow">{s.name}</span>
+        {#if s.kind === 'team'}<span class="count">{s.member_count}</span>{/if}
+      </button>
+    {/each}
+    <div class="section-head">items</div>
+  {/if}
+
   <button class="row-btn" class:active={isAllActive} onclick={setAll}>
     <span class="grow">all items</span>
     {#if !inTrash}<span class="count">{items.list.length}</span>{/if}
@@ -120,6 +149,10 @@
     letter-spacing: 0.05em;
     border-top: 1px solid var(--border);
     margin-top: 4px;
+  }
+  .section-head.no-border {
+    border-top: none;
+    margin-top: 0;
   }
   .row-btn {
     display: flex;

@@ -16,6 +16,7 @@
   import { items } from '$lib/items.svelte';
   import { prefs } from '$lib/prefs.svelte';
   import { session } from '$lib/session.svelte';
+  import { spaces } from '$lib/spaces.svelte';
   import { vault } from '$lib/vault.svelte';
   import { isPasskeySupported } from '$lib/webauthn';
 
@@ -203,6 +204,37 @@
       hint: 'security',
       run: async () => {
         await goto('/items/audit');
+      }
+    },
+    {
+      kind: 'action',
+      label: 'manage spaces',
+      hint: 'spaces',
+      run: async () => {
+        await goto('/items/spaces');
+      }
+    },
+    {
+      kind: 'action',
+      label: 'new team space',
+      hint: 'spaces',
+      run: async () => {
+        const name = prompt('team space name:')?.trim();
+        if (!name) return;
+        const space = await api.createSpace(name);
+        spaces.upsert(space);
+        await goto(`/items/spaces/${space.id}`);
+      }
+    },
+    {
+      kind: 'action',
+      label: 'members of current space',
+      hint: 'spaces',
+      run: async () => {
+        const s = spaces.active;
+        if (!s) throw new Error('no active space');
+        if (s.kind !== 'team') throw new Error('personal space has no members');
+        await goto(`/items/spaces/${s.id}`);
       }
     },
     {
