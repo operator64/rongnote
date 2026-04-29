@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { marked } from 'marked';
   import Editor from '$lib/Editor.svelte';
@@ -38,9 +39,14 @@
   const SAVE_DEBOUNCE_MS = 600;
 
   /// Push the decrypted body into the items store so the backlinks panel
-  /// can index it.
+  /// can index it. setDecryptedBody internally spreads decryptedNoteBodies,
+  /// which would make it a tracked dep of this effect and re-fire on every
+  /// write — infinite loop. untrack the call so only item.id and body are
+  /// tracked.
   $effect(() => {
-    items.setDecryptedBody(item.id, body);
+    const id = item.id;
+    const snap = body;
+    untrack(() => items.setDecryptedBody(id, snap));
   });
 
   $effect(() => {
