@@ -178,6 +178,9 @@ async fn register(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RegisterBody>,
 ) -> AppResult<impl IntoResponse> {
+    if !state.config.registration_open {
+        return Err(AppError::Forbidden);
+    }
     let email = validate_email(&body.email)?;
     check_len("passphrase_salt", &body.passphrase_salt, SALT_LEN)?;
     check_len("recovery_salt", &body.recovery_salt, SALT_LEN)?;

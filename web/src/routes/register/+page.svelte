@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import {
@@ -26,6 +27,19 @@
   let pendingUser = $state<typeof session.user>(null);
   let saved = $state(false);
   let copyLabel = $state('copy');
+  /// null = still asking server, true/false once we know.
+  let registrationOpen = $state<boolean | null>(null);
+
+  onMount(async () => {
+    try {
+      const cfg = await api.config();
+      registrationOpen = cfg.registration_open;
+    } catch {
+      // If /config fails, fall back to "open" so the user at least sees the
+      // form. Server still enforces the real check on register.
+      registrationOpen = true;
+    }
+  });
 
   async function submit(e: Event) {
     e.preventDefault();
@@ -114,7 +128,23 @@
   }
 </script>
 
-{#if !recoveryCode}
+{#if registrationOpen === null}
+  <div class="center-form muted" style="text-align:center;">…</div>
+{:else if registrationOpen === false}
+  <div class="center-form">
+    <h1>rongnote — registration closed</h1>
+    <p class="muted">
+      this instance isn't accepting new accounts right now. if you already
+      have one, sign in below. if you want your own, self-host —
+      <a href="https://github.com/operator64/rongnote">github.com/operator64/rongnote</a>
+      walks through it in three commands.
+    </p>
+    <div class="actions">
+      <span></span>
+      <a href="/login"><button type="button">sign in</button></a>
+    </div>
+  </div>
+{:else if !recoveryCode}
   <form class="center-form" onsubmit={submit}>
     <h1>rongnote — register</h1>
     <label>

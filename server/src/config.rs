@@ -8,6 +8,10 @@ pub struct Config {
     pub data_dir: String,
     pub session_ttl: Duration,
     pub is_production: bool,
+    /// If false, POST /auth/register returns 403 and the SPA shows a
+    /// "registration closed" state. Existing users can still log in.
+    /// Default: true.
+    pub registration_open: bool,
 }
 
 impl Config {
@@ -24,6 +28,9 @@ impl Config {
         let is_production = std::env::var("APP_ENV")
             .map(|v| v.eq_ignore_ascii_case("production"))
             .unwrap_or(false);
+        let registration_open = std::env::var("REGISTRATION_OPEN")
+            .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "false" | "no"))
+            .unwrap_or(true);
 
         Ok(Self {
             bind_addr,
@@ -32,6 +39,7 @@ impl Config {
             data_dir,
             session_ttl,
             is_production,
+            registration_open,
         })
     }
 

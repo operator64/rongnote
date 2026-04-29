@@ -43,6 +43,9 @@ services:
       BIND_ADDR: 0.0.0.0:8080
       APP_ENV: ${APP_ENV:-production}
       SESSION_TTL: ${SESSION_TTL:-30d}
+      # Set to "false" to close /register after you've created your account.
+      # Existing users can still log in. Default open.
+      REGISTRATION_OPEN: ${REGISTRATION_OPEN:-true}
       RUST_LOG: info,sqlx=warn
     volumes:
       - notes-data:/data

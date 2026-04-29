@@ -241,7 +241,12 @@ export interface UpdateItemInput {
   pinned?: boolean;
 }
 
+export interface PublicConfig {
+  registration_open: boolean;
+}
+
 export const api = {
+  config: () => request<PublicConfig>('GET', '/api/v1/config'),
   register: (payload: RegisterPayload) =>
     request<UserView>('POST', '/api/v1/auth/register', payload),
   precheck: (email: string) =>

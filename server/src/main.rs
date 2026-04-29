@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use axum::{
+    extract::State,
     http::{header, HeaderValue, Method, StatusCode},
     routing::get,
-    Router,
+    Json, Router,
 };
+use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
@@ -63,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
     let auth_routes = auth::router().nest("/passkey", passkey::router());
 
     let api = Router::new()
+        .route("/config", get(public_config))
         .nest("/auth", auth_routes)
         .nest("/items", items::router())
         .nest("/files", files::router())
@@ -86,6 +89,20 @@ async fn main() -> anyhow::Result<()> {
 
 async fn healthz() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
+}
+
+#[derive(Serialize)]
+struct PublicConfig {
+    registration_open: bool,
+}
+
+/// Public, unauthenticated config the SPA needs to render correctly
+/// before the user has logged in. Specifically: whether to show the
+/// register form.
+async fn public_config(State(state): State<Arc<AppState>>) -> Json<PublicConfig> {
+    Json(PublicConfig {
+        registration_open: state.config.registration_open,
+    })
 }
 
 fn init_tracing() {
