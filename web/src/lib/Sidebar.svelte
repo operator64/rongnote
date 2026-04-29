@@ -50,7 +50,9 @@
         class="row-btn"
         class:active={spaces.activeId === s.id}
         onclick={() => selectSpace(s.id)}
-        title={s.kind === 'team' ? `team · ${s.role}` : 'your personal space'}
+        title={s.kind === 'team'
+          ? `team · ${s.role} · ${s.member_count} member${s.member_count === 1 ? '' : 's'}`
+          : 'your personal space'}
       >
         {#if s.kind === 'personal'}
           <Home size={14} />
@@ -58,7 +60,11 @@
           <Users size={14} />
         {/if}
         <span class="grow">{s.name}</span>
-        {#if s.kind === 'team'}<span class="count">{s.member_count}</span>{/if}
+        {#if s.kind === 'team'}
+          <span class="count" title="members">
+            <Users size={11} /> {s.member_count}
+          </span>
+        {/if}
       </button>
     {/each}
     <div class="section-head">items</div>
