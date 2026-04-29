@@ -491,12 +491,15 @@
   .mobile-only {
     display: none;
   }
+  /* Don't bake `display: flex` into the .mobile-back base — same
+     specificity as .mobile-only, declared after, so it'd override the
+     `display: none` and the back-arrow would show up on desktop. The
+     flex+align-items rules belong in the media queries below where the
+     mobile-back actually renders. */
   .mobile-back {
     height: 32px;
     padding: 0 8px;
     border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
   }
   .mobile-back button {
     border: none;
@@ -546,6 +549,10 @@
     }
     .mobile-only {
       display: inline-flex;
+    }
+    .mobile-back {
+      display: flex;
+      align-items: center;
     }
     .desktop-only {
       display: none;
@@ -597,6 +604,10 @@
     }
     .mobile-only {
       display: inline-flex;
+    }
+    .mobile-back {
+      display: flex;
+      align-items: center;
     }
     .desktop-only {
       display: none;
