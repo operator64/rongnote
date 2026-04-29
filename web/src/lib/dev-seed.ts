@@ -86,7 +86,7 @@ attendees: jana, mo, tim
     body: `# 2026-04-27 sun
 
 ## morgen
-- ronglab notes deploy: docker-compose verifiziert, traefik labels stimmen
+- notes deploy: docker-compose verifiziert, traefik labels stimmen
 - inbox triagiert (37 → 3)
 
 ## offen
@@ -105,7 +105,7 @@ attendees: jana, mo, tim
 
 ## probably
 - self-hosted notes/secrets app (this one)
-- caldav-only client für ronglab calendar
+- caldav-only client für own calendar
 
 ## maybe
 - markdown→pdf renderer mit besserem code-highlighting als typora
@@ -141,29 +141,33 @@ ss -tlnp
   }
 ];
 
+// All values below are obvious DEMO PLACEHOLDERS. They look fake on
+// purpose so a casual reader doesn't mistake them for real credentials
+// being committed to source. dev-seed runs only when import.meta.env.DEV
+// — never ships in prod.
 const SECRETS: SecretSpec[] = [
   {
     type: 'secret',
     title: 'github.com',
     payload: {
-      username: 'rongops',
-      password: 'kP9$mZ!2vL@xQ8nR4tH7',
+      username: 'demo-user',
+      password: 'demo-password-1',
       url: 'https://github.com',
       totp_seed: 'JBSWY3DPEHPK3PXP',
-      notes: '2fa via app + recovery codes in 1password'
+      notes: '2fa via app + recovery codes in password manager'
     },
     tags: ['dev', 'work'],
     path: '/work/accounts'
   },
   {
     type: 'secret',
-    title: 'AWS root — ronglab',
+    title: 'AWS root — example',
     payload: {
-      username: 'ops@ronglab.de',
-      password: 'Tx#7yL2qV!nM8pW3zA9d',
+      username: 'demo-user@example.com',
+      password: 'demo-password-2',
       url: 'https://signin.aws.amazon.com',
       totp_seed: 'KRSXG5BAONUW42LU',
-      notes: 'root creds — should only be used for billing/identity changes. iam roles for everything else.'
+      notes: 'root creds — billing/identity only. iam roles for everything else.'
     },
     tags: ['work', 'ops/aws'],
     path: '/work/accounts'
@@ -172,9 +176,9 @@ const SECRETS: SecretSpec[] = [
     type: 'secret',
     title: 'corp vpn',
     payload: {
-      username: 'jana.k',
-      password: 'Bq4!fH7nC@2rT9sX5kP',
-      url: 'https://vpn.ronglab.de',
+      username: 'demo-user',
+      password: 'demo-password-3',
+      url: 'https://vpn.example.com',
       totp_seed: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
       notes: 'split tunnel. office cidr is 10.40.0.0/16.'
     },
@@ -186,7 +190,7 @@ const SECRETS: SecretSpec[] = [
     title: 'bank — girokonto',
     payload: {
       username: 'DE89370400440532013000',
-      password: 'PrqZ2x7TbyMnH9wK',
+      password: 'demo-password-4',
       url: 'https://example-bank.de',
       totp_seed: '',
       notes: 'login pin for online banking. tan via app.'
@@ -196,10 +200,10 @@ const SECRETS: SecretSpec[] = [
   },
   {
     type: 'secret',
-    title: 'protonmail — ops@',
+    title: 'mail — ops@',
     payload: {
-      username: 'ops@ronglab.de',
-      password: 'wM3$kZ!8qB@vL5nT2yR',
+      username: 'demo-user@example.com',
+      password: 'demo-password-5',
       url: 'https://mail.proton.me',
       totp_seed: 'MFRGGZDFMZTWQ2LK',
       notes: 'shared with the ops crew. password rotates jan + jul.'
@@ -212,10 +216,10 @@ const SECRETS: SecretSpec[] = [
     title: 'cloudflare api — automation',
     payload: {
       username: '',
-      password: 'cf_token_8nL7yP2qB4xV9mZ3kR5tH6w',
+      password: 'demo-token-6',
       url: 'https://dash.cloudflare.com',
       totp_seed: '',
-      notes: 'scoped to zone:ronglab.de + dns:edit. used by gh actions.'
+      notes: 'scoped to zone:edit + dns:edit. used by ci.'
     },
     tags: ['dev', 'ops/dns'],
     path: '/work/accounts'

@@ -36,7 +36,7 @@ impl Session {
         if let Ok(p) = std::env::var("RONGNOTE_SESSION_PATH") {
             return Ok(PathBuf::from(p));
         }
-        let proj = directories::ProjectDirs::from("de", "ronglab", "rongnote")
+        let proj = directories::ProjectDirs::from("", "rongnote", "rongnote")
             .ok_or_else(|| anyhow!("can't resolve config dir"))?;
         let dir = proj.config_dir();
         std::fs::create_dir_all(dir)

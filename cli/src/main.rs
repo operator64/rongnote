@@ -14,7 +14,10 @@ use clap::{Parser, Subcommand};
 use config::Session;
 use std::io::{self, Read, Write};
 
-const DEFAULT_SERVER: &str = "https://notes.ronglab.de";
+/// Fallback when no --server flag and no $RONGNOTE_SERVER. Points at a
+/// local dev instance so people experimenting don't accidentally talk to
+/// somebody else's box. Set --server or RONGNOTE_SERVER for real use.
+const DEFAULT_SERVER: &str = "http://localhost:8080";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -24,7 +27,7 @@ const DEFAULT_SERVER: &str = "https://notes.ronglab.de";
 )]
 struct Cli {
     /// Override the server URL (default: the one used at last login, else
-    /// $RONGNOTE_SERVER, else https://notes.ronglab.de).
+    /// $RONGNOTE_SERVER, else http://localhost:8080).
     #[arg(long, global = true)]
     server: Option<String>,
 

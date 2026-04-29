@@ -1,5 +1,13 @@
 # Deploy notes
 
+> This file documents the **maintainer's** prod setup as a worked
+> example: a single VM ("ronglab") with an existing Traefik + Cloudflare
+> tunnel stack, where rongnote slots in alongside other services. If you
+> just want to self-host with one container + a reverse proxy of your
+> choosing, [docker-compose.example.yml](docker-compose.example.yml) is
+> the simpler starting point. Read this for how blob backups, healthchecks,
+> and Traefik labels are wired in production.
+
 Production deploy lives at `notes.ronglab.de`. Image is built by the
 `build-image` workflow and pushed to
 `ghcr.io/operator64/rongnote-server:latest` on every push to `main`.
