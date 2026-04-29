@@ -305,6 +305,16 @@ export const api = {
   deleteItem: (id: string, opts: { hard?: boolean } = {}) =>
     request<void>('DELETE', `/api/v1/items/${id}${opts.hard ? '?hard=true' : ''}`),
   restoreItem: (id: string) => request<Item>('POST', `/api/v1/items/${id}/restore`),
+  /// Move an item to another space. Caller wraps item_key for the target's
+  /// kind: wrapped_item_key (master) for personal, member_keys (sealed) for team.
+  moveItem: (
+    id: string,
+    payload: {
+      target_space_id: string;
+      wrapped_item_key?: string;
+      member_keys?: MemberKeyInput[];
+    }
+  ) => request<Item>('POST', `/api/v1/items/${id}/move`, payload),
 
   uploadBlob: async (cipherBytes: Uint8Array): Promise<UploadBlobResponse> => {
     const form = new FormData();

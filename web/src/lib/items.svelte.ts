@@ -1,3 +1,4 @@
+import { SvelteMap } from 'svelte/reactivity';
 import { api, type Item, type ItemSummary, type ItemType } from './api';
 import { spaces } from './spaces.svelte';
 
@@ -28,7 +29,12 @@ class ItemStore {
   /// Decrypted note bodies, populated as the user opens notes. Used by the
   /// backlinks panel to scan for `[[wiki-links]]` without having to ask
   /// each editor.
-  decryptedNoteBodies = $state<Record<string, string>>({});
+  ///
+  /// SvelteMap (not a plain Record) so a write touches only the affected
+  /// key — no spread/replace, no read-during-write footgun. The previous
+  /// implementation rebuilt the whole object on every keystroke and tripped
+  /// effect_update_depth_exceeded when called from a NoteEditor effect.
+  decryptedNoteBodies = new SvelteMap<string, string>();
 
   /// Title of every note that currently links to `targetTitle`. Returns ids
   /// of source notes. Case-insensitive match. Skips empty titles.
@@ -37,7 +43,7 @@ class ItemStore {
     if (!t) return [];
     const re = /\[\[([^\[\]\n|]+)(?:\|[^\[\]\n]+)?\]\]/g;
     const out: { id: string; title: string }[] = [];
-    for (const [id, body] of Object.entries(this.decryptedNoteBodies)) {
+    for (const [id, body] of this.decryptedNoteBodies) {
       let m: RegExpExecArray | null;
       re.lastIndex = 0;
       while ((m = re.exec(body))) {
@@ -52,7 +58,7 @@ class ItemStore {
   }
 
   setDecryptedBody(id: string, body: string): void {
-    this.decryptedNoteBodies = { ...this.decryptedNoteBodies, [id]: body };
+    this.decryptedNoteBodies.set(id, body);
   }
 
   filteredList = $derived.by(() => {

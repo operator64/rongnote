@@ -9,7 +9,12 @@
     toBase64,
     utf8Encode
   } from '$lib/crypto';
-  import { decryptItemBody, encryptBodyForSpace, unwrapItemKey } from '$lib/itemCrypto';
+  import {
+    decryptItemBody,
+    encryptBodyForSpace,
+    unwrapItemKey,
+    wrapItemKey
+  } from '$lib/itemCrypto';
   import { uploadFile } from '$lib/files';
   import { items } from '$lib/items.svelte';
   import { prefs } from '$lib/prefs.svelte';
@@ -188,6 +193,16 @@
     },
     {
       kind: 'action',
+      label: 'move current item to space…',
+      hint: 'spaces',
+      run: async () => {
+        const id = $page.params?.id;
+        if (!id) throw new Error('open an item first');
+        await moveCurrentItem(id);
+      }
+    },
+    {
+      kind: 'action',
       label: 'version history of current item',
       hint: 'view',
       run: async () => {
@@ -293,6 +308,54 @@
   /// Generate a fresh share key, decrypt the note body, re-encrypt with the
   /// share key, ship the ciphertext to the server. The key never leaves the
   /// browser — it lives only in the URL fragment we put on the clipboard.
+  /// Re-wrap the current item's key for a different space and PATCH it
+  /// across. Personal targets get a master-key secretbox; team targets get
+  /// sealed-box-per-member.
+  async function moveCurrentItem(id: string) {
+    if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
+      throw new Error('vault locked');
+    }
+    const item = await api.getItem(id);
+
+    const candidates = spaces.list.filter((s) => s.id !== item.space_id);
+    if (candidates.length === 0) {
+      throw new Error('no other spaces available — create or join one first');
+    }
+    const list = candidates
+      .map((s, i) => `  [${i + 1}] ${s.name} (${s.kind})`)
+      .join('\n');
+    const choice = prompt(
+      `move to which space?\n\n${list}\n\nenter number 1-${candidates.length}:`,
+      '1'
+    );
+    const n = parseInt(choice ?? '', 10);
+    if (!Number.isFinite(n) || n < 1 || n > candidates.length) return;
+    const target = candidates[n - 1];
+
+    // For an item with a body: decrypt the existing item_key and re-wrap
+    // for the target space. For an empty placeholder: just move, no wraps.
+    const payload: {
+      target_space_id: string;
+      wrapped_item_key?: string;
+      member_keys?: { user_id: string; sealed_item_key: string }[];
+    } = { target_space_id: target.id };
+
+    if (item.encrypted_body && item.wrapped_item_key) {
+      const itemKey = unwrapItemKey(
+        item,
+        vault.masterKey,
+        vault.publicKey,
+        vault.privateKey
+      );
+      const wrap = await wrapItemKey(itemKey, target.id, vault.masterKey);
+      Object.assign(payload, wrap);
+    }
+
+    const updated = await api.moveItem(id, payload);
+    items.upsert(updated);
+    alert(`moved to ${target.name}`);
+  }
+
   async function shareCurrentItem(id: string) {
     if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
       throw new Error('vault locked');

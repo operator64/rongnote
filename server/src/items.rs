@@ -22,6 +22,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/", get(list).post(create))
         .route("/:id", get(get_one).patch(update).delete(delete_one))
         .route("/:id/restore", axum::routing::post(restore))
+        .route("/:id/move", axum::routing::post(move_item))
         .route("/:id/versions", get(list_versions))
         .route("/:id/versions/:version", get(get_version))
         .route(
@@ -187,6 +188,19 @@ pub struct UpdateItemBody {
     due_at: Option<time::Date>,
     done: Option<bool>,
     pinned: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MoveItemBody {
+    target_space_id: Uuid,
+    /// Required when the target is a personal space — secretbox wrap of the
+    /// item_key under the *new owner's* master_key.
+    #[serde(default, with = "crate::b64::option")]
+    wrapped_item_key: Option<Vec<u8>>,
+    /// Required when the target is a team space — sealed-box wraps for every
+    /// current member. Same shape as create/update.
+    #[serde(default)]
+    member_keys: Option<Vec<MemberKeyInput>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -656,6 +670,137 @@ async fn update(
         updated.id(),
         "item.update",
         Some(serde_json::json!({"type": updated.type_str()})),
+    )
+    .await;
+    Ok(Json(updated))
+}
+
+/// Move an item to a different space. The caller has to re-wrap the
+/// item_key for the target space's kind: secretbox under master_key for
+/// personal targets, sealed_box per current member for team targets.
+async fn move_item(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<MoveItemBody>,
+) -> AppResult<Json<ItemView>> {
+    let existing = load_item_for_user(&state, user.user_id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if existing.deleted_at.is_some() {
+        return Err(AppError::BadRequest(
+            "item is in trash; restore before moving".into(),
+        ));
+    }
+
+    let from_role = assert_member(&state, &user, existing.space_id).await?;
+    if from_role == "viewer" {
+        return Err(AppError::Forbidden);
+    }
+    if existing.space_id == body.target_space_id {
+        return Err(AppError::BadRequest(
+            "item already in that space".into(),
+        ));
+    }
+
+    let to_role = assert_member(&state, &user, body.target_space_id).await?;
+    if to_role == "viewer" {
+        return Err(AppError::Forbidden);
+    }
+
+    let target_kind = space_kind(&state, body.target_space_id).await?;
+    let target_is_team = target_kind == "team";
+
+    // Wrap-shape rules mirror create/update for the target kind.
+    let stored_wrap: Option<&[u8]> = if target_is_team {
+        if body.wrapped_item_key.is_some() {
+            return Err(AppError::BadRequest(
+                "team target uses member_keys, not wrapped_item_key".into(),
+            ));
+        }
+        if existing.encrypted_body.is_some()
+            && body.member_keys.as_ref().map_or(true, |v| v.is_empty())
+        {
+            return Err(AppError::BadRequest(
+                "moving an item with body to a team space requires member_keys".into(),
+            ));
+        }
+        None
+    } else {
+        if body.member_keys.is_some() {
+            return Err(AppError::BadRequest(
+                "personal target uses wrapped_item_key, not member_keys".into(),
+            ));
+        }
+        if existing.encrypted_body.is_some() && body.wrapped_item_key.is_none() {
+            return Err(AppError::BadRequest(
+                "moving an item with body to a personal space requires wrapped_item_key".into(),
+            ));
+        }
+        body.wrapped_item_key.as_deref()
+    };
+
+    let mut tx = state.pool.begin().await?;
+
+    // Update space + wrap. For team targets we clear wrapped_item_key (the
+    // wraps go to item_member_keys). For personal targets we clear all
+    // item_member_keys rows and write the master-key wrap.
+    sqlx::query(
+        r#"
+        UPDATE items
+           SET space_id          = $2,
+               wrapped_item_key  = $3,
+               updated_at        = NOW()
+         WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .bind(body.target_space_id)
+    .bind(stored_wrap)
+    .execute(&mut *tx)
+    .await?;
+
+    // Always clear the old per-member wraps; if the source was a team space
+    // these are stale, if the source was personal they were empty anyway.
+    sqlx::query("DELETE FROM item_member_keys WHERE item_id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+    if target_is_team {
+        if let Some(keys) = body.member_keys.as_deref() {
+            validate_member_keys(&mut tx, body.target_space_id, keys).await?;
+            for k in keys {
+                sqlx::query(
+                    r#"
+                    INSERT INTO item_member_keys (item_id, user_id, sealed_item_key)
+                    VALUES ($1, $2, $3)
+                    "#,
+                )
+                .bind(id)
+                .bind(k.user_id)
+                .bind(&k.sealed_item_key)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
+
+    tx.commit().await?;
+
+    let updated = load_item_for_user(&state, user.user_id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    crate::audit::record_item(
+        &state.pool,
+        user.user_id,
+        updated.space_id(),
+        updated.id(),
+        "item.move",
+        Some(serde_json::json!({
+            "from_space_id": existing.space_id,
+            "to_space_id": body.target_space_id,
+        })),
     )
     .await;
     Ok(Json(updated))
