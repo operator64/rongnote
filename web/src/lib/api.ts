@@ -335,10 +335,11 @@ export const api = {
   listAuditLog: (limit = 100) =>
     request<AuditEntry[]>('GET', `/api/v1/audit_log?limit=${limit}`),
 
-  listSpaces: () => request<Space[]>('GET', '/api/v1/spaces/'),
+  // Axum 0.7 nested routes don't match trailing-slash — hit /spaces (no slash).
+  listSpaces: () => request<Space[]>('GET', '/api/v1/spaces'),
   getSpace: (id: string) => request<Space>('GET', `/api/v1/spaces/${id}`),
   createSpace: (name: string) =>
-    request<Space>('POST', '/api/v1/spaces/', { name }),
+    request<Space>('POST', '/api/v1/spaces', { name }),
   deleteSpace: (id: string) => request<void>('DELETE', `/api/v1/spaces/${id}`),
   listMembers: (spaceId: string) =>
     request<Member[]>('GET', `/api/v1/spaces/${spaceId}/members`),

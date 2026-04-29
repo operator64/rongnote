@@ -182,7 +182,7 @@ impl ApiClient {
     }
 
     pub fn list_spaces(&self) -> Result<Vec<Space>> {
-        self.get("/api/v1/spaces/")
+        self.get("/api/v1/spaces")
     }
 
     pub fn list_members(&self, space_id: &str) -> Result<Vec<Member>> {
