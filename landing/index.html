@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>rongnote — end-to-end encrypted info hub</title>
+<meta name="description" content="Self-hosted notes, passwords, files, tasks, lists, snippets, and bookmarks. End-to-end encrypted. One tab to find everything.">
+<style>
+  :root {
+    --bg: #fbfbf9;
+    --fg: #1a1a1a;
+    --muted: #6a6a6a;
+    --border: #d8d6d2;
+    --accent: #1f6feb;
+    --danger: #cf222e;
+    --row-height: 28px;
+    --font-mono: ui-monospace, "JetBrains Mono", "IBM Plex Mono",
+      "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+      Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0f10;
+      --fg: #e8e6e3;
+      --muted: #8a8884;
+      --border: #2a2a2a;
+      --accent: #58a6ff;
+      --danger: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: var(--font-mono); }
+  pre {
+    background: rgba(127,127,127,0.08);
+    border: 1px solid var(--border);
+    padding: 12px 16px;
+    overflow-x: auto;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .muted { color: var(--muted); }
+  .accent { color: var(--accent); }
+
+  /* Layout */
+  .container { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+  header.site {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 0;
+    position: sticky; top: 0;
+    background: var(--bg);
+    z-index: 5;
+  }
+  header.site .container {
+    display: flex; gap: 16px; align-items: baseline;
+  }
+  .brand {
+    color: var(--fg);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .brand:hover { text-decoration: none; }
+  .brand .dot { color: var(--accent); }
+  .site-nav { display: flex; gap: 16px; flex: 1; justify-content: flex-end; }
+  .site-nav a { color: var(--muted); }
+  .site-nav a:hover { color: var(--fg); text-decoration: none; }
+
+  /* Hero */
+  section.hero {
+    padding: 64px 0 32px;
+  }
+  h1 {
+    font-size: 38px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+  h1 .pop { color: var(--accent); }
+  .lede {
+    font-size: 17px;
+    color: var(--muted);
+    max-width: 640px;
+    line-height: 1.55;
+    margin: 0 0 24px;
+  }
+  .cta-row {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    background: var(--bg);
+    cursor: pointer;
+  }
+  .btn:hover {
+    border-color: var(--fg);
+    text-decoration: none;
+  }
+  .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  .btn.primary:hover {
+    color: white;
+    filter: brightness(1.08);
+  }
+  .meta-row {
+    color: var(--muted);
+    font-size: 12px;
+    display: flex; gap: 16px; flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .meta-row span::before { content: "· "; }
+  .meta-row span:first-child::before { content: ""; }
+
+  /* Section heads */
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 14px;
+    font-weight: 500;
+    border-top: 1px solid var(--border);
+    padding-top: 32px;
+  }
+  h3 {
+    font-size: 16px;
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+  section { padding: 24px 0; }
+  p { margin: 0 0 14px; max-width: 720px; }
+
+  /* Mockup screenshot */
+  .scr {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    margin: 24px 0;
+    overflow: hidden;
+  }
+  .scr-bar {
+    height: 22px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(127,127,127,0.06);
+    display: flex; align-items: center;
+    gap: 6px; padding: 0 10px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .scr-bar .dots { display: flex; gap: 4px; }
+  .scr-bar .dots i {
+    width: 10px; height: 10px;
+    background: var(--border);
+    display: inline-block;
+    border-radius: 50%;
+  }
+  .scr-bar .url {
+    flex: 1; text-align: center;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 1px 8px;
+    max-width: 280px; margin: 0 auto;
+  }
+  .scr-body {
+    display: grid;
+    grid-template-columns: 160px 240px 1fr;
+    height: 360px;
+    font-size: 12px;
+  }
+  .scr-side, .scr-list {
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .scr-side .head, .scr-list .head, .scr-detail .head {
+    height: 24px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    display: flex; align-items: center;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .row-btn {
+    display: flex; align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 8px;
+    cursor: default;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row-btn .ic { color: var(--muted); width: 12px; flex-shrink: 0; }
+  .row-btn .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .row-btn .badge { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .row-btn.active { background: rgba(127,127,127,0.16); }
+  .scr-side .group {
+    color: var(--muted); padding: 6px 8px 2px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+  }
+  .scr-side .group:first-of-type {
+    border-top: none;
+    margin-top: 0;
+  }
+  .scr-list .row-btn {
+    height: 26px;
+    border-bottom: 1px solid var(--border);
+  }
+  .scr-list .row-btn .when { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .scr-list .pin { color: var(--accent); }
+  .scr-list .due { font-size: 10px; flex-shrink: 0; }
+  .scr-list .due.today { color: var(--accent); font-weight: 600; }
+  .scr-list .due.over { color: var(--danger); }
+  .scr-detail .head { padding: 0 12px; gap: 8px; text-transform: none; letter-spacing: 0; color: var(--fg); }
+  .scr-detail .head .tit { font-weight: 600; }
+  .scr-detail .head .meta { color: var(--muted); margin-left: auto; font-size: 11px; }
+  .scr-detail .meta-row {
+    height: 22px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 12px;
+    color: var(--muted); font-size: 11px; gap: 12px;
+  }
+  .scr-detail .meta-row .grow { flex: 1; }
+  .scr-detail .body {
+    padding: 0;
+    line-height: 1.6;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    font-size: 12px;
+  }
+  .scr-detail .body .gutter {
+    padding: 8px 4px 8px 8px;
+    color: var(--muted);
+    text-align: right;
+    user-select: none;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+  .scr-detail .body .lines {
+    padding: 8px 16px;
+    line-height: 1.55;
+  }
+  .scr-detail .body .lines div { white-space: pre; }
+  .scr-detail .body .h { color: var(--accent); }
+  .scr-detail .body code { background: rgba(127,127,127,0.10); padding: 0 4px; }
+  .scr-foot {
+    height: 22px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+  .scr-foot .grow { flex: 1; }
+
+  /* Sidebar accent dots for type icons */
+  .ic-note::before { content: "≡"; }
+  .ic-task::before { content: "☐"; }
+  .ic-list::before { content: "☰"; }
+  .ic-secret::before { content: "🔒"; font-size: 9px; }
+  .ic-snippet::before { content: "</>"; font-size: 9px; }
+  .ic-bookmark::before { content: "★"; }
+  .ic-file::before { content: "▢"; }
+  .ic-home::before { content: "⌂"; }
+  .ic-team::before { content: "◊"; }
+
+  /* Features */
+  .feat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 20px;
+    margin: 8px 0 24px;
+  }
+  .feat {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .feat .title { font-weight: 600; margin-bottom: 4px; }
+  .feat .desc { color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+  /* Tech stack */
+  .tech {
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 6px 16px;
+    font-size: 13px;
+  }
+  .tech dt { color: var(--muted); }
+  .tech dd { margin: 0; }
+
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--border);
+    margin-top: 64px;
+    padding: 24px 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  footer .container { display: flex; gap: 20px; flex-wrap: wrap; }
+  footer .grow { flex: 1; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--fg); }
+
+  /* Mobile */
+  @media (max-width: 700px) {
+    h1 { font-size: 28px; }
+    .lede { font-size: 15px; }
+    .scr-body { grid-template-columns: 90px 160px 1fr; height: 280px; }
+    .scr-body .row-btn { font-size: 11px; }
+    .scr-detail .body { padding: 10px 12px; }
+    section.hero { padding: 36px 0 16px; }
+  }
+  @media (max-width: 520px) {
+    .scr-body { grid-template-columns: 1fr; }
+    .scr-side, .scr-list { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="container">
+    <a class="brand" href="#">rongnote<span class="dot">.</span></a>
+    <nav class="site-nav">
+      <a href="#features">features</a>
+      <a href="#crypto">crypto</a>
+      <a href="#deploy">self-host</a>
+      <a href="https://github.com/operator64/rongnote">github</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <div class="container">
+    <h1>Notes, passwords, files. <span class="pop">One tab.</span> Encrypted on your device, opaque on the server.</h1>
+    <p class="lede">
+      Self-hosted information hub. Notes with wiki-links and version history,
+      passwords with TOTP and HIBP breach checks, encrypted files, tasks
+      with due dates, drag-reorder lists, snippets, bookmarks. Share-via-link
+      with the key in the URL fragment so the server never sees it. Team
+      spaces with sealed-box-per-member key wraps. WebAuthn login.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/operator64/rongnote">view on github</a>
+      <a class="btn" href="#deploy">self-host</a>
+      <a class="btn" href="#features">what's inside</a>
+    </div>
+    <div class="meta-row">
+      <span>Rust + SvelteKit + Postgres</span>
+      <span>libsodium client-side crypto</span>
+      <span>single static binary</span>
+      <span>MIT</span>
+    </div>
+
+    <!-- Mockup screenshot: notes list with editor open -->
+    <div class="scr" aria-hidden="true">
+      <div class="scr-bar">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="url">notes.example.com/items</div>
+      </div>
+      <div class="scr-body">
+        <aside class="scr-side">
+          <div class="row-btn active"><span class="grow">all items</span><span class="badge">12</span></div>
+          <div class="group">by type</div>
+          <div class="row-btn"><span class="ic ic-note"></span><span class="grow">notes</span><span class="badge">6</span></div>
+          <div class="row-btn"><span class="ic ic-task"></span><span class="grow">tasks</span><span class="badge">0</span></div>
+          <div class="row-btn"><span class="ic ic-list"></span><span class="grow">lists</span><span class="badge">0</span></div>
+          <div class="row-btn"><span class="ic ic-secret"></span><span class="grow">secrets</span><span class="badge">6</span></div>
+          <div class="row-btn"><span class="ic ic-snippet"></span><span class="grow">snippets</span><span class="badge">0</span></div>
+          <div class="row-btn"><span class="ic ic-bookmark"></span><span class="grow">bookmarks</span><span class="badge">0</span></div>
+          <div class="group">paths</div>
+          <div class="row-btn"><span class="grow">/</span><span class="badge">12</span></div>
+          <div class="row-btn" style="padding-left:18px;"><span class="grow">journal</span><span class="badge">1</span></div>
+          <div class="row-btn" style="padding-left:18px;"><span class="grow">personal</span><span class="badge">3</span></div>
+          <div class="row-btn" style="padding-left:18px;"><span class="grow">work</span><span class="badge">8</span></div>
+          <div class="row-btn" style="padding-left:30px;"><span class="grow">projekte</span><span class="badge">1</span></div>
+          <div class="group">tags</div>
+          <div class="row-btn"><span class="grow">#daily</span><span class="badge">1</span></div>
+          <div class="row-btn"><span class="grow">#dev</span><span class="badge">2</span></div>
+          <div class="row-btn"><span class="grow">#ideen</span><span class="badge">1</span></div>
+          <div class="row-btn"><span class="grow">#work</span><span class="badge">6</span></div>
+        </aside>
+        <section class="scr-list">
+          <div class="head">items</div>
+          <div class="row-btn"><span class="ic ic-secret"></span><span class="grow">cloudflare api — automation</span><span class="when">13:51</span></div>
+          <div class="row-btn"><span class="ic ic-secret"></span><span class="grow">protonmail — ops@</span><span class="when">13:51</span></div>
+          <div class="row-btn"><span class="ic ic-secret"></span><span class="grow">bank — girokonto</span><span class="when">13:51</span></div>
+          <div class="row-btn"><span class="ic ic-note"></span><span class="grow">Snippets — common shell</span><span class="when">13:51</span></div>
+          <div class="row-btn active"><span class="ic ic-note"></span><span class="grow">Side project ideas</span><span class="when">13:51</span></div>
+          <div class="row-btn"><span class="ic ic-note"></span><span class="grow">Daily 2026-04-27</span><span class="when">13:51</span></div>
+          <div class="row-btn"><span class="ic ic-note"></span><span class="grow">Reading queue</span><span class="when">13:51</span></div>
+          <div class="row-btn"><span class="ic ic-note"></span><span class="grow">Meeting — 2026-04-22 ops sync</span><span class="when">13:51</span></div>
+          <div class="row-btn"><span class="ic ic-note"></span><span class="grow">Migration plan — postgres 16</span><span class="when">13:51</span></div>
+        </section>
+        <main class="scr-detail">
+          <div class="head">
+            <span class="tit">Side project ideas</span>
+            <span class="meta">preview · delete</span>
+          </div>
+          <div class="meta-row">
+            <span>#personal, #ideen</span>
+            <span class="grow"></span>
+            <span>/personal/projekte</span>
+          </div>
+          <div class="body">
+            <div class="gutter">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>10<br>11<br>12<br>13</div>
+            <div class="lines">
+<div class="h"># Side project ideas</div><div>&nbsp;</div><div class="h">## probably</div><div>- self-hosted notes/secrets app (this one)</div><div>- caldav-only client für ronglab calendar</div><div>&nbsp;</div><div class="h">## maybe</div><div>- markdown→pdf renderer mit besserem code-highlighting als typora</div><div>- rss reader minus die social features</div><div>&nbsp;</div><div class="h">## nope</div><div>- "yet another" task manager</div><div>- chat app</div>
+            </div>
+          </div>
+          <div class="scr-foot">
+            <span class="muted">saved 53s ago</span>
+            <span class="grow"></span>
+            <span class="muted">e2e · af50be46</span>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <h2>features</h2>
+    <p class="muted" style="font-size:14px;margin-bottom:24px;">Everything's encrypted before the server sees it. Same vault for everything; no separate password manager + notes app + file drop.</p>
+
+    <div class="feat-grid">
+      <div class="feat">
+        <div class="title">Notes</div>
+        <div class="desc">Markdown editor with live preview. <code>[[wiki-links]]</code> with autocomplete and broken-link rendering. Backlinks panel. Daily notes, templates.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Tasks</div>
+        <div class="desc">Checkboxes, due dates with overdue / today / future colour cues, one-click toggle from the list, sorted open-first.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Lists</div>
+        <div class="desc">Drag-reorder checklists for shopping, packing, anything. Enter to add, Backspace to remove, "clear N done" sweep.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Secrets</div>
+        <div class="desc">Passwords + TOTP codes (live with countdown). Generator with charset toggles. Copy with 30s clipboard clear, reveal with 10s auto-hide. HIBP k-anonymity breach check (the password never leaves the device).</div>
+      </div>
+      <div class="feat">
+        <div class="title">Files</div>
+        <div class="desc">Drag &amp; drop upload, encrypted on the client, content-addressed blobs on disk. Inline preview for image / PDF / text. 50 MB cap.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Snippets &amp; Bookmarks</div>
+        <div class="desc">Code blocks with language tag, copy button. URL bookmarks with notes. Same encrypted body as everything else.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Tags + path tree + search</div>
+        <div class="desc">Sidebar with type / tag / path filters. Cmd-K palette searches across all items by title, dispatches actions, opens shares, scans backlinks.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Version history</div>
+        <div class="desc">Every body save snapshots the previous ciphertext. Restore any version; the restore is itself versioned. No silent overwrite.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Share via link</div>
+        <div class="desc">Notes and files. Random share key in the URL fragment — the server never sees it. Optional expiry. Recipient needs no account.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Team spaces</div>
+        <div class="desc">Per-item key sealed once per current member with libsodium <code>crypto_box_seal</code>. Atomic invite re-wrap. Owner / editor / viewer roles. Move items between spaces.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Auth</div>
+        <div class="desc">Argon2id-derived KEK from passphrase. Recovery code as second escrow. Multiple WebAuthn passkeys with PRF-derived KEK — no per-passkey master key duplication. Auto-lock after 15 min idle.</div>
+      </div>
+      <div class="feat">
+        <div class="title">CLI companion</div>
+        <div class="desc"><code>rongnote login / ls / cat / new / spaces / use</code>. Same E2E crypto as the browser. Single 4 MB binary. Useful for cron, scripted ingest, headless servers.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Audit log</div>
+        <div class="desc">Every auth event and every secret read is recorded. Each user sees their own log; never anyone else's. Plain notes / files / tasks reads are <em>not</em> recorded — too noisy and a tempting honeypot.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Encrypted export</div>
+        <div class="desc">One-click tar bundle of everything. The bytes are the same ciphertext the server holds — your master key on a device decrypts the bundle.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Theme + font</div>
+        <div class="desc">Light / dark / auto, persisted. Font size step adjustable from the status bar. No third-party fonts, just the OS monospace stack.</div>
+      </div>
+      <div class="feat">
+        <div class="title">Mobile responsive</div>
+        <div class="desc">Stack mode below 700px: list <em>or</em> detail, never both. Slide-in sidebar drawer. Touch-friendly drag-reorder. Searches via a synthetic Cmd-K dispatched from a button.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="crypto">
+  <div class="container">
+    <h2>what the server can never see</h2>
+    <p>The server stores ciphertext, key wraps, and metadata you opted into being plaintext (titles, tags, paths, timestamps, file sizes). Everything else lives behind libsodium primitives the server can't run.</p>
+
+    <pre><code>passphrase ──Argon2id──► passphrase_kek
+recovery code ──Argon2id──► recovery_kek
+                              │
+master_key (random, 32 bytes) ─┘
+   │
+   ├─ secretbox-wrap by passphrase_kek   → master_wrap_passphrase
+   ├─ secretbox-wrap by recovery_kek     → master_wrap_recovery
+   ├─ keyed BLAKE2b("rongnote-auth-v1")  → auth_hash (server-side Argon2id of this)
+   └─ wraps each per-item item_key:
+         personal space → secretbox(item_key, master_key)
+         team space     → crypto_box_seal(item_key, member.public_key) per member
+
+item bodies: secretbox(plaintext, item_key)
+files:       secretbox(file_bytes, item_key)  — content-addressed by sha256 of ciphertext
+shares:      secretbox(payload, share_key)    — share_key lives in the URL fragment</code></pre>
+
+    <p style="font-size:13px;color:var(--muted);margin-top:14px;">A leaked database without a passphrase or recovery code is opaque. A leaked share token without the URL fragment is opaque. A removed team member sees no future updates. <a href="https://github.com/operator64/rongnote/blob/main/SECURITY.md">SECURITY.md</a> has the full threat model.</p>
+  </div>
+</section>
+
+<section id="deploy">
+  <div class="container">
+    <h2>self-host in three commands</h2>
+
+<pre><code># 1. one compose file
+curl -O https://raw.githubusercontent.com/operator64/rongnote/main/docker-compose.example.yml
+mv docker-compose.example.yml docker-compose.yml
+
+# 2. one secret
+echo "NOTES_DB_PW=$(openssl rand -base64 24)" > .env
+
+# 3. up
+docker compose up -d
+# → http://localhost:8080</code></pre>
+
+    <p style="font-size:13px;color:var(--muted);">The image bundles the SvelteKit SPA inside the Rust binary via <code>rust-embed</code>; one container serves both. Postgres in a sidecar. <a href="https://github.com/operator64/rongnote/blob/main/deploy.md">deploy.md</a> covers Cloudflare tunnel + Traefik, blob backups, and reverse-proxy notes.</p>
+
+    <p style="font-size:13px;color:var(--muted);">Built and pushed by GitHub Actions on every push to <code>main</code>. Multi-arch image at <code>ghcr.io/operator64/rongnote-server:latest</code>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <h2>stack</h2>
+    <dl class="tech">
+      <dt>backend</dt><dd>Rust 1.91 + Axum 0.7 + SQLx + Postgres 16</dd>
+      <dt>frontend</dt><dd>SvelteKit 2 + Svelte 5 (runes) + CodeMirror 6 + Lucide</dd>
+      <dt>crypto</dt><dd>libsodium-wrappers-sumo client; Argon2id + webauthn-rs server</dd>
+      <dt>image</dt><dd>multi-stage Dockerfile, single static binary, ~80 MB compressed</dd>
+      <dt>auth</dt><dd>passphrase, recovery code, multi-passkey via WebAuthn PRF</dd>
+      <dt>cli</dt><dd>separate <code>rongnote-cli</code> workspace member, RustCrypto stack</dd>
+    </dl>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <span>rongnote · MIT licensed</span>
+    <span class="grow"></span>
+    <a href="https://github.com/operator64/rongnote">github</a>
+    <a href="https://github.com/operator64/rongnote/blob/main/SECURITY.md">security</a>
+    <a href="https://github.com/operator64/rongnote/blob/main/deploy.md">deploy</a>
+    <a href="https://notes.ronglab.de">live</a>
+  </div>
+</footer>
+
+</body>
+</html>

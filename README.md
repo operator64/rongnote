@@ -4,8 +4,8 @@ Self-hosted, end-to-end encrypted information hub. One tab to find your
 notes, passwords, files, tasks, lists, snippets, and bookmarks. Built for
 a small crew or just yourself.
 
-> Status: **live** at [notes.ronglab.de](https://notes.ronglab.de) — single-user
-> production, multi-user supported. See [ROADMAP](#roadmap) for what's next.
+> **[rongnote.ronglab.de](https://rongnote.ronglab.de)** · landing + features
+> **[notes.ronglab.de](https://notes.ronglab.de)** · live instance (single-user)
 
 ## Features
 
@@ -41,9 +41,13 @@ a small crew or just yourself.
   removes orphans.
 - **Version history** — every body-save is a snapshot. Browse, preview,
   restore. Restore itself is versioned (reversible).
-- **Share via link** — `/share/<token>#<key>`. Notes only (v1). Server stores
-  re-encrypted ciphertext; the share key lives in the URL fragment, never
-  reaches the server. Per-link expire + revoke.
+- **Share via link** — `/share/<token>#<key>`. Notes and files. Server stores
+  re-encrypted ciphertext (notes) or the existing item-key wrapped under the
+  share key (files); the share key lives in the URL fragment, never reaches
+  the server. Per-link expire + revoke.
+- **Team spaces** — invite editors / viewers; per-item key sealed once per
+  member with libsodium `crypto_box_seal`. Atomic invite re-wrap. Move items
+  between spaces from Cmd-K.
 - **Audit log** — every secret read, item write, share creation, and auth
   event recorded. Per-user view at `/items/audit`.
 - **Encrypted backup** — one-click `.tar` export with all your encrypted data.
@@ -64,12 +68,32 @@ a small crew or just yourself.
 - Monospace, six-colour theme (light/dark/auto), adjustable font size,
   persistent in `localStorage`.
 - Cmd-K command palette: `new note/task/list/secret/snippet/bookmark`,
-  `upload file`, `today's daily note`, `manage passkeys`, `audit log`,
-  `export backup`, `share current note`, `version history`, theme/font
-  controls, etc.
+  `upload file`, `today's daily note`, `manage spaces`, `new team space`,
+  `move current item to space…`, `share current item via link`,
+  `manage passkeys`, `audit log`, `export backup`, `version history`,
+  theme/font controls.
 - **Mobile** (`<700px`): stack-mode (list OR detail, never both); sidebar
   becomes a slide-in drawer; hamburger + search buttons in the pane head;
   status bar drops non-essential controls.
+
+### CLI
+
+A separate `rongnote` binary at [`cli/`](cli/) for headless workflows — same
+E2E crypto as the browser, same `/api/v1/*` API.
+
+```bash
+cargo build --release -p rongnote-cli
+./target/release/rongnote login                # email + passphrase
+./target/release/rongnote ls --type=note
+./target/release/rongnote cat <id>
+echo "..." | ./target/release/rongnote new note "Standup 2026-04-29"
+./target/release/rongnote spaces
+```
+
+Session (cookie + unwrapped master_key + privkey) cached at
+`~/.config/rongnote/session.json` (chmod 600 on Unix). Set
+`RONGNOTE_NO_PERSIST=1` to disable. `--server` / `RONGNOTE_SERVER`
+overrides the target.
 
 ### Cryptography
 
@@ -79,16 +103,16 @@ contents — see [SECURITY.md](SECURITY.md) for the full scheme.
 | Primitive | Use |
 |---|---|
 | Argon2id (libsodium INTERACTIVE) | passphrase / recovery-code KDF |
-| XSalsa20-Poly1305 (`crypto_secretbox`) | item bodies + key wrapping + share-link payloads |
+| XSalsa20-Poly1305 (`crypto_secretbox`) | item bodies + key wrapping (personal) + share-link payloads |
+| `crypto_box_seal` (sealed box) | per-member item-key wraps in team spaces |
 | BLAKE2b keyed | auth-hash + passkey-KEK derivation |
-| X25519 keypair | reserved for team-share sealing |
 | SHA-1 | HIBP k-anonymity prefix |
 | WebAuthn PRF | passkey-derived KEK for vault unlock |
 
 What the server **does** see: titles, tags, paths, due dates, task done
 state, file sizes, timestamps. What it **does not**: passphrases, master
 keys, private keys, note bodies, secret values, file contents, share-link
-keys.
+keys, team-space item keys.
 
 ## Stack
 
@@ -98,11 +122,25 @@ keys.
   [rust-embed](https://crates.io/crates/rust-embed).
 - **Crypto on the client:** [libsodium-wrappers-sumo](https://github.com/jedisct1/libsodium.js).
 - **WebAuthn:** [webauthn-rs](https://github.com/kanidm/webauthn-rs) on the server.
+- **CLI crypto:** RustCrypto stack (argon2 + crypto_secretbox + crypto_box + blake2).
 - **Image:** multi-stage build → `ghcr.io/operator64/rongnote-server:latest`.
 
 ## Quick start
 
-Local dev:
+### Self-host
+
+```bash
+curl -O https://raw.githubusercontent.com/operator64/rongnote/main/docker-compose.example.yml
+mv docker-compose.example.yml docker-compose.yml
+echo "NOTES_DB_PW=$(openssl rand -base64 24)" > .env
+docker compose up -d
+# → http://localhost:8080
+```
+
+Put a TLS reverse proxy in front for production. See [deploy.md](deploy.md)
+for a Cloudflare tunnel + Traefik example with backup retention notes.
+
+### Local dev
 
 ```bash
 cp .env.example .env                 # set NOTES_DB_PW
@@ -111,11 +149,7 @@ cd server && cargo run               # http://localhost:8080
 cd web && npm install && npm run dev # http://localhost:5173 (proxies /api → :8080)
 ```
 
-Production deploy: see [deploy.md](deploy.md). Short version: drop the
-compose snippet into your stack, run `docker compose up -d`, point a
-hostname at it. The CI workflow at
-[`.github/workflows/image.yml`](.github/workflows/image.yml) builds and
-publishes the image on every push to `main`.
+Hot-reload works for Svelte; the Rust server needs manual restart.
 
 ## Architecture
 
@@ -128,28 +162,34 @@ publishes the image on every push to `main`.
                  │   /api/v1/auth          session cookies     │
                  │     /passkey            register/login/list │
                  │   /api/v1/items         CRUD per type       │
+                 │     /:id/move           move between spaces │
                  │     /:id/versions       snapshots + restore │
+                 │   /api/v1/spaces        team space mgmt     │
+                 │     /:id/members        invite + re-wrap    │
                  │   /api/v1/files         encrypted blobs     │
                  │   /api/v1/audit_log     own activity        │
                  │   /api/v1/export        encrypted backup    │
                  │   /api/v1/share/<token> public read-only    │
+                 │     /<token>/blob       file-share download │
                  ├─────────────────────────────────────────────┤
                  │  Postgres            sha256-addressed disk  │
-                 │  ┌──────────────┐    ┌──────────────────┐  │
-                 │  │ users        │    │ blobs/ab/cdef…   │  │
-                 │  │ items        │    │ blobs/12/3456…   │  │
-                 │  │ item_versions│    │ …                │  │
-                 │  │ files_blobs  │    └──────────────────┘  │
-                 │  │ passkeys     │                          │
-                 │  │ share_links  │                          │
-                 │  │ audit_log    │                          │
-                 │  └──────────────┘                          │
+                 │  ┌──────────────────┐    ┌────────────────┐│
+                 │  │ users            │    │ blobs/ab/cdef…││
+                 │  │ spaces / members │    │ blobs/12/3456…││
+                 │  │ items            │    └────────────────┘│
+                 │  │ item_member_keys │                       │
+                 │  │ item_versions    │                       │
+                 │  │ files_blobs      │                       │
+                 │  │ passkeys         │                       │
+                 │  │ share_links      │                       │
+                 │  │ audit_log        │                       │
+                 │  └──────────────────┘                       │
                  └─────────────────────────────────────────────┘
 ```
 
 ## Roadmap
 
-Done:
+Shipped:
 
 - [x] Auth — passphrase, recovery code, WebAuthn PRF, multi-passkey, auto-lock
 - [x] E2E crypto — notes, secrets, lists, files, tasks, snippets, bookmarks
@@ -159,57 +199,32 @@ Done:
 - [x] Theme (light/dark/auto) + adjustable font size
 - [x] Trash with restore + hard-delete
 - [x] Version history (snapshots + restore)
-- [x] Share via link (notes only)
-- [x] HIBP breach check
-- [x] Audit log
-- [x] Encrypted export
+- [x] Share via link — notes and files
+- [x] HIBP breach check, audit log, encrypted export
 - [x] Mobile responsive layout
-- [x] CI/CD: GitHub Actions → ghcr.io → docker compose
+- [x] **Team spaces** — invite, sealed-box-per-member wraps, atomic re-wrap on
+      invite, move items between spaces
+- [x] **CLI companion** — `rongnote login / ls / cat / new / spaces / use`
+- [x] CI/CD — GitHub Actions → ghcr.io → docker compose
 
 Open:
 
 - [ ] **CalDAV** — calendar items + iOS/macOS/Thunderbird sync
-- [ ] Browser extension (autofill)
+- [ ] Browser extension (autofill secrets)
 - [ ] Vault import (counterpart to encrypted export — currently restore is
       manual SQL + blob copy per [deploy.md](deploy.md))
-
-Done since v1.x:
-
-- [x] **Team spaces + sharing** — sealed-box-per-member wraps in
-      `item_member_keys`; atomic invite re-wrap; per-space switcher
-- [x] **CLI companion** — see [CLI](#cli) below
-- [x] **File shares** — same fragment-key trick as note shares; recipient
-      pulls the ciphertext blob via a public route, decrypts locally
-      (no re-encryption / no double-storage)
-
-## CLI
-
-A `rongnote` binary lives at `cli/` for headless workflows — same E2E
-crypto as the browser, talking to the same `/api/v1/*`. Useful for
-scripted ingest, cron-driven backups, or quick search from the terminal.
-
-```bash
-cargo build --release -p rongnote-cli
-./target/release/rongnote login                # prompts for email + passphrase
-./target/release/rongnote status
-./target/release/rongnote ls --type=note
-./target/release/rongnote cat <id>
-echo "# meeting notes\n..." | ./target/release/rongnote new note "Standup 2026-04-29"
-./target/release/rongnote spaces
-./target/release/rongnote use <space-id>
-```
-
-Session (cookie + unwrapped master_key + privkey) is cached at
-`~/.config/rongnote/session.json` (chmod 600 on Unix). Set
-`RONGNOTE_NO_PERSIST=1` to disable on-disk caching — every command
-re-prompts. Set `RONGNOTE_SERVER` or pass `--server` to point at a
-different instance.
 
 ## Documentation
 
 - [SECURITY.md](SECURITY.md) — threat model, crypto details, what we promise
 - [deploy.md](deploy.md) — production deploy + backup retention
 - [CLAUDE.md](CLAUDE.md) — project context for AI coding sessions
+
+## Contributing
+
+Personal project; PRs and issues are welcome but I'm slow to review. If
+you find a security bug, please open a private issue or email instead of
+filing publicly.
 
 ## License
 

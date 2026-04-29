@@ -1,0 +1,55 @@
+# rongnote — minimal self-host compose. Reverse-proxy / TLS up to you.
+#
+# Quick start:
+#   curl -O https://raw.githubusercontent.com/operator64/rongnote/main/docker-compose.example.yml
+#   mv docker-compose.example.yml docker-compose.yml
+#   echo "NOTES_DB_PW=$(openssl rand -base64 24)" > .env
+#   docker compose up -d
+#   open http://localhost:8080
+#
+# Production notes:
+# - Put a TLS reverse proxy in front (Caddy, Traefik, nginx). The app
+#   speaks plain HTTP; cookies are marked Secure when APP_ENV=production.
+# - Set PUBLIC_URL to your real https hostname so WebAuthn passkeys work.
+# - Persist the named volumes (`notes-data`, `notes-db-data`); they hold
+#   your encrypted blobs and the postgres data dir.
+# - See deploy.md for backup retention + Cloudflare tunnel setup.
+
+services:
+  notes-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: notes
+      POSTGRES_PASSWORD: ${NOTES_DB_PW:?set NOTES_DB_PW in .env}
+      POSTGRES_DB: notes
+    volumes:
+      - notes-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notes -d notes"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  notes:
+    image: ghcr.io/operator64/rongnote-server:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://notes:${NOTES_DB_PW}@notes-db:5432/notes
+      DATA_DIR: /data
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      BIND_ADDR: 0.0.0.0:8080
+      APP_ENV: ${APP_ENV:-production}
+      SESSION_TTL: ${SESSION_TTL:-30d}
+      RUST_LOG: info,sqlx=warn
+    volumes:
+      - notes-data:/data
+    depends_on:
+      notes-db:
+        condition: service_healthy
+
+volumes:
+  notes-data:
+  notes-db-data:
