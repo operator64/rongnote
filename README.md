@@ -169,7 +169,6 @@ Done:
 Open:
 
 - [ ] **CalDAV** — calendar items + iOS/macOS/Thunderbird sync
-- [ ] Share files (currently notes only)
 - [ ] Browser extension (autofill)
 - [ ] Vault import (counterpart to encrypted export — currently restore is
       manual SQL + blob copy per [deploy.md](deploy.md))
@@ -179,6 +178,9 @@ Done since v1.x:
 - [x] **Team spaces + sharing** — sealed-box-per-member wraps in
       `item_member_keys`; atomic invite re-wrap; per-space switcher
 - [x] **CLI companion** — see [CLI](#cli) below
+- [x] **File shares** — same fragment-key trick as note shares; recipient
+      pulls the ciphertext blob via a public route, decrypts locally
+      (no re-encryption / no double-storage)
 
 ## CLI
 

@@ -252,8 +252,42 @@ the token (e.g. from server logs or DB dump) cannot. Owner can revoke
 (`DELETE /api/v1/shares/:id`) which removes the row from the DB so
 subsequent fetches return 404.
 
-Out of scope (yet): file shares (re-encrypting a multi-MB blob client-side
-needs streaming), passphrase-locked shares (additional KEK around the
+### File shares
+
+Same fragment-key trick, but the bytes never re-encrypt. The owner ships
+an encrypted *metadata* payload that includes the original `item_key`;
+the recipient pulls the ciphertext blob from a public route and decrypts
+locally:
+
+```
+owner client                            server                recipient client
+  ─ generate share_key (random 32 bytes)
+  ─ unwrap item_key from item.wrapped_item_key
+  ─ payload_json = {filename, mime, size, item_key_b64}
+  ─ encrypted_payload = secretbox(utf8(payload_json), share_key)
+  ── POST /items/<id>/share ──────────►
+                                          ─ store encrypted_payload + token + expiry
+                                       ◄── {token, …}
+  ─ build URL = https://host/share/<token>#<base64(share_key)>
+
+                                                                     follows URL
+                                                                     ── GET /share/<token> ───►
+                                                                     ◄── {encrypted_payload, item_type='file', …}
+                                                                     ─ key = atob(location.hash[1:])
+                                                                     ─ payload = secretbox_open(payload, key)
+                                                                     ─ {filename, mime, size, item_key} = JSON.parse(...)
+                                                                     ── GET /share/<token>/blob ──►
+                                                                     ─ load_blob(items.blob_sha256)
+                                                                     ◄── ciphertext bytes
+                                                                     ─ plaintext = secretbox_open(blob, item_key)
+```
+
+The blob endpoint is unauthenticated but only resolves blob_sha256 via
+the share row, so a leaked token alone (no fragment) gets you ciphertext
+bytes you can't decrypt. Server side this is one extra route +
+content-type=application/octet-stream + cache-control:private.
+
+Out of scope (yet): passphrase-locked shares (additional KEK around the
 share_key in the URL), audit of share-recipient access (we record creation
 and increment a counter per fetch but don't tie counts to identities).
 

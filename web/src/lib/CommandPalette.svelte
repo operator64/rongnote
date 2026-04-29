@@ -9,7 +9,7 @@
     toBase64,
     utf8Encode
   } from '$lib/crypto';
-  import { decryptItemBody, encryptBodyForSpace } from '$lib/itemCrypto';
+  import { decryptItemBody, encryptBodyForSpace, unwrapItemKey } from '$lib/itemCrypto';
   import { uploadFile } from '$lib/files';
   import { items } from '$lib/items.svelte';
   import { prefs } from '$lib/prefs.svelte';
@@ -178,12 +178,12 @@
     },
     {
       kind: 'action',
-      label: 'share current note via link',
+      label: 'share current item via link',
       hint: 'create',
       run: async () => {
         const id = $page.params?.id;
-        if (!id) throw new Error('open a note first');
-        await shareCurrentNote(id);
+        if (!id) throw new Error('open an item first');
+        await shareCurrentItem(id);
       }
     },
     {
@@ -293,14 +293,14 @@
   /// Generate a fresh share key, decrypt the note body, re-encrypt with the
   /// share key, ship the ciphertext to the server. The key never leaves the
   /// browser — it lives only in the URL fragment we put on the clipboard.
-  async function shareCurrentNote(id: string) {
+  async function shareCurrentItem(id: string) {
     if (!vault.masterKey || !vault.publicKey || !vault.privateKey) {
       throw new Error('vault locked');
     }
     const item = await api.getItem(id);
-    if (item.type !== 'note') throw new Error('only notes can be shared in v1');
-
-    const body = decryptItemBody(item, vault.masterKey, vault.publicKey, vault.privateKey);
+    if (item.type !== 'note' && item.type !== 'file') {
+      throw new Error(`type ${item.type} cannot be shared via link`);
+    }
 
     const days = parseInt(
       prompt('expire in how many days? (blank = never)', '7') ?? '',
@@ -308,11 +308,34 @@
     );
     const expires_in_days = Number.isFinite(days) && days > 0 ? days : null;
 
-    // Use libsodium's randombytes via existing helper — generateItemKey gives
-    // us 32 bytes which doubles fine as a share key.
+    // generateItemKey gives 32 bytes — doubles as a share_key.
     const shareKey = generateItemKey();
-    const cipher = seal(utf8Encode(body), shareKey);
 
+    let payloadBytes: Uint8Array;
+    if (item.type === 'note') {
+      const body = decryptItemBody(item, vault.masterKey, vault.publicKey, vault.privateKey);
+      payloadBytes = utf8Encode(body);
+    } else {
+      // For files: ship encrypted metadata + the original item_key so the
+      // recipient can pull the ciphertext blob via /share/<token>/blob and
+      // decrypt locally. The bytes never re-encrypt; saves bandwidth.
+      const itemKey = unwrapItemKey(item, vault.masterKey, vault.publicKey, vault.privateKey);
+      const meta = decryptItemBody(item, vault.masterKey, vault.publicKey, vault.privateKey);
+      const parsed = JSON.parse(meta) as {
+        filename: string;
+        mime: string;
+        size: number;
+      };
+      const sharePayload = {
+        filename: parsed.filename,
+        mime: parsed.mime,
+        size: parsed.size,
+        item_key_b64: toBase64(itemKey)
+      };
+      payloadBytes = utf8Encode(JSON.stringify(sharePayload));
+    }
+
+    const cipher = seal(payloadBytes, shareKey);
     const share = await api.createShare(id, {
       encrypted_payload: toBase64(cipher),
       expires_in_days

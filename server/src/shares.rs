@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -27,6 +28,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/items/:id/shares", get(list))
         .route("/shares/:id", delete(revoke))
         .route("/share/:token", get(public_get))
+        .route("/share/:token/blob", get(public_blob))
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,10 +93,13 @@ async fn create(
     .fetch_optional(&state.pool)
     .await?;
     let (id, type_, title) = row.ok_or(AppError::NotFound)?;
-    if type_ != "note" {
-        return Err(AppError::BadRequest(
-            "only notes can be shared via link in v1".into(),
-        ));
+    // Notes ship the encrypted body inline. Files ship a metadata payload
+    // (filename, mime, size, item_key) inline + the recipient pulls the
+    // ciphertext blob from /share/<token>/blob. Other types not supported.
+    if type_ != "note" && type_ != "file" {
+        return Err(AppError::BadRequest(format!(
+            "type {type_} cannot be shared via link"
+        )));
     }
 
     let expires_at = body
@@ -226,4 +231,49 @@ async fn public_get(
         encrypted_payload,
         expires_at,
     }))
+}
+
+/// Public download of the encrypted blob bytes for a file share. The bytes
+/// are still ciphertext (encrypted under the item_key the share's
+/// encrypted_payload reveals), so handing them out unauthenticated leaks
+/// nothing beyond "a file of this size exists".
+async fn public_blob(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+) -> AppResult<Response> {
+    let row: Option<(String, Option<Vec<u8>>)> = sqlx::query_as(
+        r#"
+        SELECT i.type, i.blob_sha256
+          FROM share_links s
+          JOIN items i ON i.id = s.item_id
+         WHERE s.token = $1
+           AND (s.expires_at IS NULL OR s.expires_at > NOW())
+           AND i.deleted_at IS NULL
+        "#,
+    )
+    .bind(&token)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (item_type, blob_sha256) = row.ok_or(AppError::NotFound)?;
+    if item_type != "file" {
+        return Err(AppError::NotFound);
+    }
+    let sha = blob_sha256.ok_or(AppError::NotFound)?;
+
+    let path = crate::files::blob_path_for(&state.config.data_dir, &sha);
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        tracing::error!(error = %e, path = %path.display(), "shared blob missing on disk");
+        AppError::NotFound
+    })?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=60"),
+    );
+    Ok((StatusCode::OK, headers, bytes).into_response())
 }
