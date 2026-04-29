@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>rongnote — settings</title>
+<style>
+  :root {
+    --bg: #fbfbf9;
+    --fg: #1a1a1a;
+    --muted: #6a6a6a;
+    --border: #d8d6d2;
+    --accent: #1f6feb;
+    --danger: #cf222e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0f10;
+      --fg: #e8e6e3;
+      --muted: #8a8884;
+      --border: #2a2a2a;
+      --accent: #58a6ff;
+      --danger: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .wrap { max-width: 600px; margin: 32px auto; padding: 0 24px; }
+  h1 {
+    font-size: 18px;
+    margin: 0 0 4px;
+    font-weight: 600;
+  }
+  h1 .dot { color: var(--accent); }
+  p.muted { color: var(--muted); margin: 0 0 24px; font-size: 13px; }
+  label { display: block; margin: 16px 0 4px; color: var(--muted); font-size: 12px; }
+  input {
+    width: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    font: inherit;
+  }
+  input:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+  button {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    font: inherit;
+    cursor: pointer;
+    margin-top: 16px;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  button:hover { border-color: var(--fg); }
+  .row { display: flex; gap: 8px; }
+  .ok { color: var(--accent); margin-top: 8px; font-size: 12px; }
+  .err { color: var(--danger); margin-top: 8px; font-size: 12px; min-height: 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>rongnote<span class="dot">.</span> settings</h1>
+    <p class="muted">URL of the rongnote instance to talk to. The extension
+      uses the same auth flow as the browser app — your passphrase never
+      leaves the device, only an Argon2-derived auth-hash reaches the
+      server.</p>
+
+    <label>server URL</label>
+    <input id="server" type="url" placeholder="https://notes.example.com">
+
+    <label>email (remembered for the next sign-in)</label>
+    <input id="email" type="email">
+
+    <div class="row">
+      <button id="save" class="primary">save</button>
+    </div>
+    <div class="ok" id="ok"></div>
+    <div class="err" id="err"></div>
+  </div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

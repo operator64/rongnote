@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "rongnote autofill",
+  "version": "0.1.0",
+  "description": "Surface rongnote secrets for the current tab URL.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "rongnote@operator64",
+      "strict_min_version": "120.0"
+    }
+  },
+  "permissions": ["storage", "activeTab", "clipboardWrite", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "rongnote",
+    "default_icon": {
+      "16": "icons/icon.svg",
+      "48": "icons/icon.svg",
+      "128": "icons/icon.svg"
+    }
+  },
+  "icons": {
+    "16": "icons/icon.svg",
+    "48": "icons/icon.svg",
+    "128": "icons/icon.svg"
+  },
+  "background": {
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

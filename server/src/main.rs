@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::State,
-    http::{header, HeaderValue, Method, StatusCode},
+    http::{header, Method, StatusCode},
     routing::get,
     Json, Router,
 };
@@ -114,19 +114,31 @@ fn init_tracing() {
         .init();
 }
 
-/// In dev the SvelteKit server runs on a separate origin (5173), so we allow
-/// it via CORS. In production the SPA is served from the same origin so CORS
-/// is effectively a no-op.
+/// CORS rules:
+/// - dev SPA on http://localhost:5173 — origin allowlisted (dev only)
+/// - browser extension popups on moz-extension:// + chrome-extension:// —
+///   allowed in any env, since the extension's UUID isn't known up front.
+/// - prod same-origin SPA — no CORS interaction needed.
+///
+/// Credentials are allowed across the board so cookie-based sessions work
+/// from the extension popup.
 fn cors_layer(config: &Config) -> CorsLayer {
-    if config.is_production {
-        return CorsLayer::new();
-    }
-    let dev_origins = [
-        HeaderValue::from_static("http://localhost:5173"),
-        HeaderValue::from_static("http://127.0.0.1:5173"),
-    ];
+    let allow_dev_spa = !config.is_production;
+    let allow_origin = AllowOrigin::predicate(move |origin, _req| {
+        if let Ok(s) = origin.to_str() {
+            if s.starts_with("moz-extension://") || s.starts_with("chrome-extension://") {
+                return true;
+            }
+            if allow_dev_spa
+                && (s == "http://localhost:5173" || s == "http://127.0.0.1:5173")
+            {
+                return true;
+            }
+        }
+        false
+    });
     CorsLayer::new()
-        .allow_origin(AllowOrigin::list(dev_origins))
+        .allow_origin(allow_origin)
         .allow_credentials(true)
         .allow_methods([
             Method::GET,

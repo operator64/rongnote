@@ -1,0 +1,21 @@
+{
+  "name": "rongnote-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Firefox/Chrome MV3 extension that surfaces rongnote secrets for the current tab URL.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/firefox-webext-browser": "^120.0.4",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "libsodium-sumo": "^0.7.15",
+    "libsodium-wrappers-sumo": "^0.7.15"
+  }
+}

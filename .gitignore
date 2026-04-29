@@ -27,6 +27,9 @@ node_modules/
 /server/static/*
 !/server/static/.gitkeep
 
+# WebExtension build output
+/extension/dist/
+
 # Per-developer cargo config (Windows OpenSSL paths etc.). See
 # .cargo/config.example.toml for what to put here on a Windows dev box.
 /.cargo/config.toml

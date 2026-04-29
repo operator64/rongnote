@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>rongnote</title>
+<style>
+  :root {
+    --bg: #fbfbf9;
+    --fg: #1a1a1a;
+    --muted: #6a6a6a;
+    --border: #d8d6d2;
+    --accent: #1f6feb;
+    --danger: #cf222e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0f10;
+      --fg: #e8e6e3;
+      --muted: #8a8884;
+      --border: #2a2a2a;
+      --accent: #58a6ff;
+      --danger: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    width: 360px;
+    min-height: 200px;
+  }
+  header {
+    height: 32px;
+    border-bottom: 1px solid var(--border);
+    padding: 0 10px;
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 600;
+  }
+  header .dot { color: var(--accent); }
+  header .grow { flex: 1; }
+  header .host { color: var(--muted); font-weight: 400; }
+  header a { color: var(--muted); text-decoration: none; cursor: pointer; }
+  header a:hover { color: var(--fg); }
+  main { padding: 10px; }
+  .muted { color: var(--muted); }
+  .danger { color: var(--danger); }
+  label { display: block; margin: 8px 0 2px; color: var(--muted); font-size: 11px; }
+  input {
+    width: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+    font: inherit;
+  }
+  input:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+  button {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--fg); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  button.primary:hover { filter: brightness(1.08); color: white; }
+  button:disabled { color: var(--muted); cursor: not-allowed; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row.spaced { justify-content: space-between; }
+
+  .err { color: var(--danger); font-size: 12px; min-height: 16px; margin-top: 6px; }
+  .stage { color: var(--muted); font-size: 12px; min-height: 16px; margin-top: 6px; }
+
+  ul.secrets { list-style: none; padding: 0; margin: 0; }
+  ul.secrets li {
+    border-bottom: 1px solid var(--border);
+    padding: 6px 0;
+  }
+  ul.secrets li:last-child { border-bottom: none; }
+  .title { font-weight: 600; }
+  .user { color: var(--muted); font-size: 11px; word-break: break-all; }
+  .copy-row { margin-top: 4px; gap: 4px; }
+  .copy-row button { padding: 2px 8px; font-size: 11px; }
+  .toast {
+    position: fixed; bottom: 8px; left: 10px; right: 10px;
+    background: var(--accent); color: white;
+    padding: 4px 8px; font-size: 11px; text-align: center;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    opacity: 0;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <header>
+    <span>rongnote<span class="dot">.</span></span>
+    <span class="host" id="host"></span>
+    <span class="grow"></span>
+    <a id="settings" title="settings">⚙</a>
+    <a id="lock" title="lock" hidden>×</a>
+  </header>
+  <main id="main"></main>
+  <div class="toast" id="toast"></div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
