@@ -25,7 +25,14 @@ in production.
 
 ```
 .
-├── Cargo.toml             workspace root, single member: server
+├── Cargo.toml             workspace root, members: server + cli
+├── cli/
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs        clap subcommands
+│       ├── api.rs         typed HTTP client
+│       ├── crypto.rs      mirrors web/src/lib/crypto.ts (RustCrypto)
+│       └── config.rs      ~/.config/rongnote/session.json
 ├── server/
 │   ├── Cargo.toml
 │   ├── migrations/        sqlx::migrate! — applied at startup, never rolled back
@@ -261,6 +268,23 @@ ssh ronglab "cd /opt/notes && docker compose pull notes && docker compose up -d 
 `import.meta.env.DEV`. Tree-shaken out of prod builds. Generates 6 notes
 + 6 secrets + tags spread across paths. Idempotent (skips existing
 titles).
+
+## CLI
+
+`cli/` is a workspace member that builds a `rongnote` binary. Same E2E
+crypto as the browser: same Argon2id-INTERACTIVE params (mem=64 MiB,
+ops=2), same XSalsa20-Poly1305 secretbox layout (`nonce || ct || mac`),
+same sealed-box construction (`eph_pk || box(nonce=BLAKE2b(eph_pk||rec_pk),
+recipient_pk, eph_sk)`).
+
+Don't depend on the `seal` feature of `crypto_box` — its API path moves
+between minor versions. We hand-roll sealed-box on top of `SalsaBox`
+(which is XSalsa20-Poly1305 over X25519 ECDH = libsodium's
+`crypto_box_easy`). Tests in `cli/src/crypto.rs` round-trip everything.
+
+Session cache (cookie + unwrapped master_key + privkey) lives at
+`directories::ProjectDirs::from("de", "ronglab", "rongnote")`. Set
+`RONGNOTE_NO_PERSIST=1` to bypass.
 
 ## Things to NOT do
 

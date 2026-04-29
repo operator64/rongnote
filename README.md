@@ -168,14 +168,40 @@ Done:
 
 Open:
 
-- [ ] **Team spaces + sharing** — schema is there, sealed-box wrap-per-member
-      is the missing UI
 - [ ] **CalDAV** — calendar items + iOS/macOS/Thunderbird sync
 - [ ] Share files (currently notes only)
-- [ ] CLI companion (`rong note new`, `rong pw get`, `rong ssh-add`)
 - [ ] Browser extension (autofill)
 - [ ] Vault import (counterpart to encrypted export — currently restore is
       manual SQL + blob copy per [deploy.md](deploy.md))
+
+Done since v1.x:
+
+- [x] **Team spaces + sharing** — sealed-box-per-member wraps in
+      `item_member_keys`; atomic invite re-wrap; per-space switcher
+- [x] **CLI companion** — see [CLI](#cli) below
+
+## CLI
+
+A `rongnote` binary lives at `cli/` for headless workflows — same E2E
+crypto as the browser, talking to the same `/api/v1/*`. Useful for
+scripted ingest, cron-driven backups, or quick search from the terminal.
+
+```bash
+cargo build --release -p rongnote-cli
+./target/release/rongnote login                # prompts for email + passphrase
+./target/release/rongnote status
+./target/release/rongnote ls --type=note
+./target/release/rongnote cat <id>
+echo "# meeting notes\n..." | ./target/release/rongnote new note "Standup 2026-04-29"
+./target/release/rongnote spaces
+./target/release/rongnote use <space-id>
+```
+
+Session (cookie + unwrapped master_key + privkey) is cached at
+`~/.config/rongnote/session.json` (chmod 600 on Unix). Set
+`RONGNOTE_NO_PERSIST=1` to disable on-disk caching — every command
+re-prompts. Set `RONGNOTE_SERVER` or pass `--server` to point at a
+different instance.
 
 ## Documentation
 
