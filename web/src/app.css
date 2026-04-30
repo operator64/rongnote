@@ -95,6 +95,10 @@ hr {
   align-items: center;
   gap: 6px;
   height: var(--row-height);
+  /* Don't let the parent flex column shrink rows when the total exceeds
+     viewport — without this, hundreds of rows collapse onto each other
+     and overflow-y on .list-pane can't kick in. */
+  flex-shrink: 0;
   padding: 0 8px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;

@@ -400,6 +400,7 @@
     display: flex;
     align-items: center;
     height: var(--row-height);
+    flex-shrink: 0;
     padding: 0 8px;
     border-bottom: 1px solid var(--border);
     gap: 6px;
