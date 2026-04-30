@@ -53,21 +53,27 @@ export function decryptSecret(item: Item, vault: Vault): SecretPayload | null {
   }
 }
 
-/// Match a saved secret's URL against the current tab URL. Compares hosts
-/// after normalising — example.com matches m.example.com and
-/// foo.example.com (suffix match), and exact-host always matches.
+/// Match a saved secret's URL against the current tab URL. Lenient:
+/// - tolerates bare hosts ("github.com") and scheme-less URLs
+/// - strips leading "www." on both sides
+/// - exact-host match OR label-bounded suffix match either way
+///   (so "github.com" saved matches "api.github.com" current and vice
+///    versa, but "githubsupport.com" stays out)
 export function urlMatches(savedUrl: string, currentHost: string): boolean {
   if (!savedUrl) return false;
+  let s = savedUrl.trim();
+  if (!s) return false;
+  // No scheme? Prepend https:// so URL parses.
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = 'https://' + s;
   let savedHost: string;
   try {
-    savedHost = new URL(savedUrl).hostname.toLowerCase();
+    savedHost = new URL(s).hostname.toLowerCase();
   } catch {
     return false;
   }
+  savedHost = savedHost.replace(/\.+$/, '').replace(/^www\./, '');
   if (!savedHost) return false;
-  const cur = currentHost.toLowerCase();
+  const cur = currentHost.toLowerCase().replace(/^www\./, '');
   if (savedHost === cur) return true;
-  // Suffix match on label boundary: "github.com" matches "api.github.com"
-  // but not "githubsupport.com".
   return cur.endsWith('.' + savedHost) || savedHost.endsWith('.' + cur);
 }
