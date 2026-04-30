@@ -20,10 +20,13 @@ import { decryptSecret, urlMatches, type SecretPayload } from './lib/items';
 import { generateCode, parseTotpInput } from './lib/totp';
 import {
   clearVault,
+  loadSecretCache,
   loadSettings,
   loadVault,
+  saveSecretCache,
   saveSettings,
   saveVault,
+  type CachedSecret,
   type Vault
 } from './lib/store';
 
@@ -198,12 +201,12 @@ function renderLogin(server: string, lastEmail: string) {
 async function renderUnlocked(server: string, vault: Vault, host: string) {
   $main.innerHTML = `<div class="muted">loading secrets…</div>`;
   const api = new Api(server);
+
   let summaries: ItemSummary[] = [];
   try {
     summaries = await api.listItems({ type: 'secret' });
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      // Cookie expired or otherwise rejected. Bounce to login.
       await clearVault();
       await render();
       return;
@@ -214,18 +217,83 @@ async function renderUnlocked(server: string, vault: Vault, host: string) {
     return;
   }
 
-  // Fetch + decrypt each secret. Sequential to be gentle on the server;
-  // n is small (<200 typical).
-  const decoded: { summary: ItemSummary; payload: SecretPayload }[] = [];
+  // Cache hit avoids the slow fetch+decrypt loop. We refresh only items
+  // whose updated_at changed (or that aren't cached yet).
+  const cache = await loadSecretCache();
+  const fromCache: CachedSecret[] = [];
+  const needFetch: ItemSummary[] = [];
   for (const s of summaries) {
-    try {
-      const full = await api.getItem(s.id);
-      const payload = decryptSecret(full as Item, vault);
-      if (payload) decoded.push({ summary: s, payload });
-    } catch (err) {
-      console.warn('skip', s.id, err);
+    const c = cache[s.id];
+    if (c && c.updated_at === s.updated_at) {
+      fromCache.push(c);
+    } else {
+      needFetch.push(s);
     }
   }
+
+  // Fetch missing in parallel batches of 16. Update progress message so
+  // the user sees something happening on the first cold load.
+  const fresh: CachedSecret[] = [];
+  if (needFetch.length > 0) {
+    let processed = 0;
+    const batchSize = 16;
+    for (let i = 0; i < needFetch.length; i += batchSize) {
+      const batch = needFetch.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map(async (s): Promise<CachedSecret | null> => {
+          try {
+            const full = (await api.getItem(s.id)) as Item;
+            const payload = decryptSecret(full, vault);
+            if (!payload) return null;
+            return {
+              id: s.id,
+              updated_at: s.updated_at,
+              title: s.title,
+              username: payload.username,
+              password: payload.password,
+              url: payload.url,
+              totp_seed: payload.totp_seed,
+              notes: payload.notes
+            };
+          } catch (err) {
+            console.warn('skip', s.id, err);
+            return null;
+          }
+        })
+      );
+      for (const r of results) if (r) fresh.push(r);
+      processed += batch.length;
+      $main.innerHTML = `<div class="muted">loading secrets… ${processed} / ${needFetch.length}</div>`;
+    }
+    // Persist updated cache. Prune items deleted server-side.
+    const stillExists = new Set(summaries.map((s) => s.id));
+    for (const id of Object.keys(cache)) {
+      if (!stillExists.has(id)) delete cache[id];
+    }
+    for (const f of fresh) cache[f.id] = f;
+    await saveSecretCache(cache);
+  }
+
+  const decoded = [...fromCache, ...fresh].map<{
+    summary: ItemSummary;
+    payload: SecretPayload;
+  }>((c) => ({
+    summary: {
+      id: c.id,
+      type: 'secret',
+      title: c.title,
+      tags: [],
+      path: '',
+      updated_at: c.updated_at
+    },
+    payload: {
+      username: c.username,
+      password: c.password,
+      url: c.url,
+      totp_seed: c.totp_seed,
+      notes: c.notes
+    }
+  }));
 
   const matching = host
     ? decoded.filter((d) => urlMatches(d.payload.url, host))

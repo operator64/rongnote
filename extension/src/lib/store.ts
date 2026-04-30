@@ -8,6 +8,7 @@
 
 const KEY_SETTINGS = 'rn.settings';
 const KEY_VAULT = 'rn.vault';
+const KEY_CACHE = 'rn.cache';
 
 export interface Settings {
   server: string;
@@ -45,5 +46,30 @@ export async function saveVault(v: Vault): Promise<void> {
 }
 
 export async function clearVault(): Promise<void> {
-  await browser.storage.session.remove(KEY_VAULT);
+  await browser.storage.session.remove([KEY_VAULT, KEY_CACHE]);
+}
+
+/// Decrypted secret payloads keyed by item id. Lives in session storage so
+/// it dies with the browser. Lets the popup show matches in <100ms once
+/// the first decrypt-everything pass has run.
+export interface CachedSecret {
+  id: string;
+  updated_at: string;
+  title: string;
+  username: string;
+  password: string;
+  url: string;
+  totp_seed: string;
+  notes: string;
+}
+
+export async function loadSecretCache(): Promise<Record<string, CachedSecret>> {
+  const out = await browser.storage.session.get(KEY_CACHE);
+  return (out[KEY_CACHE] as Record<string, CachedSecret> | undefined) ?? {};
+}
+
+export async function saveSecretCache(
+  cache: Record<string, CachedSecret>
+): Promise<void> {
+  await browser.storage.session.set({ [KEY_CACHE]: cache });
 }
