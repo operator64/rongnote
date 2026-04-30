@@ -636,7 +636,9 @@
             type="button"
             class="result"
             class:active={i === cursor}
-            onmouseenter={() => (cursor = i)}
+            onmousemove={() => {
+              if (cursor !== i) cursor = i;
+            }}
             onclick={() => run(item)}
           >
             <span class="kind muted">{item.kind === 'item' ? '·' : '›'}</span>
