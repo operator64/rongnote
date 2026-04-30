@@ -27,6 +27,7 @@
   let query = $state('');
   let cursor = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
+  let resultsEl: HTMLElement | undefined = $state();
 
   type CommandAction = {
     kind: 'action';
@@ -542,6 +543,15 @@
     if (cursor >= visibleItems.length) cursor = Math.max(0, visibleItems.length - 1);
   });
 
+  /// Keep the active row in view when the user arrow-keys past the
+  /// visible window. block:'nearest' makes mouse-hover a no-op.
+  $effect(() => {
+    void cursor;
+    if (!resultsEl) return;
+    const active = resultsEl.querySelector<HTMLElement>('.result.active');
+    active?.scrollIntoView({ block: 'nearest' });
+  });
+
   function onGlobalKey(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
@@ -620,7 +630,7 @@
         autocomplete="off"
         spellcheck="false"
       />
-      <div class="results">
+      <div class="results" bind:this={resultsEl}>
         {#each visibleItems as item, i (item.kind + ':' + (item.kind === 'item' ? item.id : item.label))}
           <button
             type="button"
