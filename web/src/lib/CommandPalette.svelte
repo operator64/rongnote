@@ -221,6 +221,14 @@
     },
     {
       kind: 'action',
+      label: 'import secrets from CSV',
+      hint: 'create',
+      run: async () => {
+        await goto('/items/import');
+      }
+    },
+    {
+      kind: 'action',
       label: 'manage spaces',
       hint: 'spaces',
       run: async () => {
