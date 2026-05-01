@@ -48,10 +48,18 @@ a small crew or just yourself.
 - **Team spaces** — invite editors / viewers; per-item key sealed once per
   member with libsodium `crypto_box_seal`. Atomic invite re-wrap. Move items
   between spaces from Cmd-K.
+- **CSV import** — `/items/import` reads exports from Firefox, Chrome,
+  Bitwarden, 1Password, KeePass; auto-detects the header shape. Each row
+  becomes an encrypted secret in the active space. Smart dedup compares
+  `(host, username)` against decrypted existing secrets, so re-imports
+  don't double up.
 - **Audit log** — every secret read, item write, share creation, and auth
   event recorded. Per-user view at `/items/audit`.
 - **Encrypted backup** — one-click `.tar` export with all your encrypted data.
   Pipe through `age -p` for full at-rest privacy.
+- **Closeable signups** — `REGISTRATION_OPEN=false` env flag locks
+  `/register` after you've created your account. Existing users can still
+  sign in.
 
 ### Auth
 
@@ -70,8 +78,9 @@ a small crew or just yourself.
 - Cmd-K command palette: `new note/task/list/secret/snippet/bookmark`,
   `upload file`, `today's daily note`, `manage spaces`, `new team space`,
   `move current item to space…`, `share current item via link`,
-  `manage passkeys`, `audit log`, `export backup`, `version history`,
-  theme/font controls.
+  `import secrets from CSV`, `manage passkeys`, `audit log`,
+  `export backup`, `version history`, theme/font controls. Arrow-key
+  navigation scrolls active row into view.
 - **Mobile** (`<700px`): stack-mode (list OR detail, never both); sidebar
   becomes a slide-in drawer; hamburger + search buttons in the pane head;
   status bar drops non-essential controls.
@@ -86,7 +95,7 @@ cargo build --release -p rongnote-cli
 ./target/release/rongnote login                # email + passphrase
 ./target/release/rongnote ls --type=note
 ./target/release/rongnote cat <id>
-echo "..." | ./target/release/rongnote new note "Standup 2026-04-29"
+echo "..." | ./target/release/rongnote new note "Standup 2026-05-01"
 ./target/release/rongnote spaces
 ```
 
@@ -94,6 +103,25 @@ Session (cookie + unwrapped master_key + privkey) cached at
 `~/.config/rongnote/session.json` (chmod 600 on Unix). Set
 `RONGNOTE_NO_PERSIST=1` to disable. `--server` / `RONGNOTE_SERVER`
 overrides the target.
+
+### Browser extension (Firefox / Chrome MV3)
+
+A WebExtension at [`extension/`](extension/) — popup that surfaces secrets
+matching the current tab's host with one-click copy of username, password,
+TOTP. Same E2E crypto path as the SPA, separate session. Decrypted
+payloads cached in `browser.storage.session` so subsequent popup opens
+are instant; first-time decrypt of N secrets uses parallel batches.
+
+```bash
+cd extension
+npm install
+npm run build      # → extension/dist/
+```
+
+Firefox: `about:debugging` → **This Firefox** → **Load Temporary Add-on…** →
+`extension/dist/manifest.json`. Chrome: `chrome://extensions` → **Load unpacked**
+→ pick `extension/dist/`. Configure server URL in the extension's options
+page once; signs in with passphrase, auto-locks after 15 min idle.
 
 ### Cryptography
 
@@ -139,6 +167,10 @@ docker compose up -d
 
 Put a TLS reverse proxy in front for production. See [deploy.md](deploy.md)
 for a Cloudflare tunnel + Traefik example with backup retention notes.
+
+After your first registration finishes, set `REGISTRATION_OPEN=false` in
+`.env` and `docker compose up -d` again to lock the door. Existing users
+can still log in; new accounts get a "registration closed" page.
 
 ### Local dev
 
@@ -205,14 +237,21 @@ Shipped:
 - [x] **Team spaces** — invite, sealed-box-per-member wraps, atomic re-wrap on
       invite, move items between spaces
 - [x] **CLI companion** — `rongnote login / ls / cat / new / spaces / use`
+- [x] **Browser extension** (Firefox / Chrome MV3) — popup matches current
+      tab host, copies user / pass / TOTP with auto-clear
+- [x] **CSV import** — Firefox / Chrome / Bitwarden / 1Password / KeePass,
+      smart `(host, username)` dedup
+- [x] **Closeable signups** via `REGISTRATION_OPEN` env flag
 - [x] CI/CD — GitHub Actions → ghcr.io → docker compose
 
 Open:
 
 - [ ] **CalDAV** — calendar items + iOS/macOS/Thunderbird sync
-- [ ] Browser extension (autofill secrets)
+- [ ] Form-fill in the browser extension (currently copy-to-clipboard only)
+- [ ] Save-from-page in the extension (capture new credentials from a login form)
 - [ ] Vault import (counterpart to encrypted export — currently restore is
       manual SQL + blob copy per [deploy.md](deploy.md))
+- [ ] Mozilla-signed extension build (currently temporary-add-on / unpacked)
 
 ## Documentation
 

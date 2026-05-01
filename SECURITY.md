@@ -364,8 +364,9 @@ Recorded actions:
 - `auth.register`, `auth.login` (with `method: passphrase|passkey`),
   `auth.logout`, `auth.passphrase_reset`, `auth.passkey_register`,
   `auth.passkey_delete`
-- `item.create`, `item.update`, `item.soft_delete`, `item.hard_delete`,
-  `item.restore`, `item.restore_version`
+- `item.create`, `item.update`, `item.move`, `item.soft_delete`,
+  `item.hard_delete`, `item.restore`, `item.restore_version`
+- `space.create`, `space.delete`, `space.invite`, `space.remove_member`
 - `secret.read`
 - `share.create`
 - `export`
@@ -390,8 +391,38 @@ age -p backup.tar > backup.tar.age
 
 Restore on a fresh server: see [deploy.md](deploy.md#encrypted-backup-per-user-export).
 
+## Browser extension
+
+The Firefox/Chrome MV3 popup at `extension/` runs the same crypto path
+as the SPA but in its own context. Two notes specific to its threat
+posture:
+
+- **Independent session.** The extension does its own login (passphrase
+  → Argon2id KEK → unwrap `master_key`) and stores the result in
+  `browser.storage.session`, which is cleared on browser close + on
+  the same 15-min idle alarm the SPA uses. It does NOT share state
+  with an open SPA tab — separate origins, separate sessions.
+- **Decrypted secret cache.** First popup open after unlock decrypts
+  every secret in the active space and stashes the plaintext payload
+  in `browser.storage.session`, keyed by item id and `updated_at`.
+  Subsequent opens skip the decrypt step. Cache is cleared together
+  with the master key on browser close, vault clear, or idle-lock —
+  same exposure window as the master key.
+
+Server-side, CORS allows `moz-extension://` and `chrome-extension://`
+origins through with credentials. The extension's host_permissions
+declare the API host so cookies are sent on cross-origin fetches.
+
+## Closeable signups
+
+`REGISTRATION_OPEN=false` env var on the server makes
+`POST /api/v1/auth/register` return 403 and the SPA's `/register`
+page show a "registration closed" notice. Existing users still log in
+normally. The flag is exposed unauthenticated at `GET /api/v1/config`
+purely so the SPA can render the right state without a 403 round-trip.
+
 ## Reporting
 
 Open an issue at <https://github.com/operator64/rongnote/issues>. For
-sensitive disclosure, contact the operator listed in the repo settings
-out-of-band.
+sensitive disclosure, please use a private security advisory:
+<https://github.com/operator64/rongnote/security/advisories/new>.

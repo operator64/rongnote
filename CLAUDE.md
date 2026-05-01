@@ -37,35 +37,43 @@ in production.
 │   ├── Cargo.toml
 │   ├── migrations/        sqlx::migrate! — applied at startup, never rolled back
 │   └── src/
-│       ├── main.rs        wiring + AppState
+│       ├── main.rs        wiring + AppState + /api/v1/config + CORS layer
 │       ├── auth.rs        register/precheck/login/logout/recovery/me
+│       │                  (gated by config.registration_open)
 │       ├── passkey.rs     WebAuthn register + discoverable login + list/delete
 │       ├── items.rs       CRUD for notes/secrets/tasks/lists/files/snippets/bookmarks
-│       │                  + version snapshots on body update
-│       ├── shares.rs      /share/<token> public + per-item create/list/revoke
+│       │                  + /:id/move + version snapshots on body update
+│       ├── spaces.rs      team spaces + members + atomic invite re-wrap
+│       ├── shares.rs      /share/<token> public + /<token>/blob for files
 │       ├── files.rs       blob upload + download
 │       ├── audit.rs       record + list activity
 │       ├── export.rs      tar bundle of all user data
 │       ├── session.rs     cookie + sessions table + AuthUser extractor
 │       ├── b64.rs         serde adapters: base64 + hex + date_iso (YYYY-MM-DD)
 │       ├── error.rs       AppError → IntoResponse
-│       ├── config.rs      env var parsing
+│       ├── config.rs      env var parsing (DATABASE_URL, REGISTRATION_OPEN, …)
 │       └── static_assets.rs   rust-embed of ../web/build
 ├── web/
 │   ├── package.json
 │   ├── vite.config.ts     dev proxy /api → :8080, libsodium fix plugin
 │   ├── svelte.config.js   adapter-static, SPA fallback
+│   ├── static/favicon.svg light/dark via prefers-color-scheme inside SVG
 │   └── src/
 │       ├── app.html       inline FOUC-prevention script
-│       ├── app.css        6-color theme, --base-font-size
+│       ├── app.css        6-color theme, --base-font-size,
+│       │                   .list-row { flex-shrink: 0 } so big lists scroll
 │       └── lib/
 │           ├── api.ts             single fetch wrapper
 │           ├── crypto.ts          libsodium helpers + base32 + recovery code
+│           ├── itemCrypto.ts      personal vs team-space wrap/unwrap helpers
+│           ├── csvImport.ts       Firefox/Chrome/Bitwarden/1Password CSV → secrets
 │           ├── webauthn.ts        navigator.credentials wrappers + PRF
 │           ├── vault.svelte.ts    master_key state + sessionStorage + idle lock
 │           ├── session.svelte.ts  /me cache
+│           ├── spaces.svelte.ts   active space + member list cache
 │           ├── prefs.svelte.ts    theme + font, persisted to localStorage
-│           ├── items.svelte.ts    items list + filters + tag/path catalogs
+│           ├── items.svelte.ts    items list + filters + tag/path catalogs +
+│           │                       SvelteMap decryptedNoteBodies (avoids effect loops)
 │           ├── totp.ts            RFC 6238 via Web Crypto
 │           ├── password.ts        random PW generator
 │           ├── *Editor.svelte     one per type: Note, Secret, Task, List,
@@ -77,8 +85,20 @@ in production.
 │           ├── Sidebar.svelte
 │           ├── CommandPalette.svelte
 │           └── dev-seed.ts        gated on import.meta.env.DEV
+├── extension/                 Firefox/Chrome MV3 popup, separate npm + esbuild build
+│   ├── package.json
+│   ├── build.mjs              bundles src/{popup,options,background}.ts → dist/
+│   └── src/
+│       ├── manifest.json      MV3, "wasm-unsafe-eval" CSP for libsodium
+│       ├── popup.html / popup.ts
+│       ├── options.html / options.ts
+│       ├── background.ts      idle-lock alarm
+│       └── lib/{crypto,api,items,store,totp}.ts
+├── landing/index.html         single static page → rongnote.ronglab.de via nginx
+├── docker-compose.example.yml minimal public-consumption compose
 ├── deploy.md, SECURITY.md, README.md
-└── .github/workflows/image.yml    multi-stage Docker build → ghcr.io
+└── .github/                   issue templates + workflows/image.yml
+                               (multi-stage Docker build → ghcr.io)
 ```
 
 ## Crypto invariants
@@ -249,6 +269,33 @@ These have all bit me. Don't repeat:
     synthetic `KeyboardEvent('keydown', { key: 'k', ctrlKey: true })` on
     `window` — the search button in the mobile pane head does exactly
     this since touch users don't have a keyboard.
+17. **`$effect` self-loops via spread-and-assign on `$state` objects.**
+    `setDecryptedBody` originally did `this.bodies = { ...this.bodies, [id]: body }`.
+    Called from a NoteEditor `$effect`, the spread READ `bodies` (tracked
+    dep) and the assign WROTE it (re-trigger) → `effect_update_depth_exceeded`.
+    Two layered fixes: `untrack(...)` at the call site AND switch the
+    underlying state to `SvelteMap` (fine-grained per-key reactivity).
+    Apply both for any read-and-write inside an effect.
+18. **Flex children shrink by default.** A vertical flex container with
+    `overflow-y: auto` looks correct until total content exceeds the
+    viewport — without `flex-shrink: 0` on each row, hundreds of items
+    proportionally shrink to overlap, and overflow-y never engages.
+    `.list-row` and `.task-row` need it explicitly.
+19. **`mouseenter` fires when scroll changes which element is under a
+    stationary pointer.** Cmd-K's arrow-key navigation triggers
+    `scrollIntoView`; using `mouseenter` to highlight rows then re-set
+    the cursor mid-keyboard-nav. Use `mousemove` instead — it only fires
+    on actual pointer movement.
+20. **Browser extension MV3 needs `'wasm-unsafe-eval'`** in CSP for
+    libsodium to load. Default MV3 CSP blocks WASM compilation. Set
+    `content_security_policy.extension_pages: "script-src 'self'
+    'wasm-unsafe-eval'; object-src 'self'"` in `manifest.json`.
+21. **Server CORS must let `moz-extension://` and `chrome-extension://`
+    origins through with `credentials`** — the popup is a different
+    origin from the API host, and the session cookie is SameSite=Lax.
+    Firefox WebExtensions with `host_permissions` declared still send
+    the cookie cross-origin if the server's `Access-Control-Allow-Origin`
+    matches the extension's origin. See `cors_layer` in `server/src/main.rs`.
 
 ## Build + push image (CI)
 
@@ -283,8 +330,50 @@ between minor versions. We hand-roll sealed-box on top of `SalsaBox`
 `crypto_box_easy`). Tests in `cli/src/crypto.rs` round-trip everything.
 
 Session cache (cookie + unwrapped master_key + privkey) lives at
-`directories::ProjectDirs::from("de", "ronglab", "rongnote")`. Set
+`directories::ProjectDirs::from("", "rongnote", "rongnote")`. Set
 `RONGNOTE_NO_PERSIST=1` to bypass.
+
+## Browser extension
+
+`extension/` is a Firefox/Chrome MV3 popup, separate from the workspace
+(its own `package.json` + `node build.mjs` esbuild bundling, no Cargo
+involvement). Loads via `about:debugging` → Load Temporary Add-on → pick
+`extension/dist/manifest.json`.
+
+Same crypto stack as the SPA — bundles `libsodium-wrappers-sumo` with
+the same upstream-packaging-bug workaround as `web/vite.config.ts`
+(esbuild plugin redirects the broken relative import). See
+`extension/build.mjs`.
+
+The popup runs its own login (passphrase → Argon2id KEK → unwrap
+`master_key`) and stores the result in `browser.storage.session`,
+which clears on browser close. An idle-lock alarm (15 min) clears it
+sooner. Decrypted secret payloads are also cached in session storage
+keyed by item id + `updated_at` so subsequent opens are instant; the
+first cold load fetches and decrypts in parallel batches of 16.
+
+Don't try to plumb auth through the SPA's tab — extension and SPA are
+separate origins, and Firefox WebExtensions with `host_permissions`
+make their own credentialed fetches anyway. Just keep them
+independent.
+
+## CSV import
+
+`/items/import` reads exported password CSVs (Firefox / Chrome /
+Bitwarden / 1Password / KeePass) and creates one secret per row.
+Header detection in `web/src/lib/csvImport.ts` — extend the candidate
+lists in `find(...)` if a new format shows up.
+
+Dedup is two-stage:
+1. Parse-time, in-batch — multiple CSV rows with the same
+   `(host, username)` become one (Firefox stores http+https variants
+   of the same login as separate rows).
+2. Pre-import scan — every existing secret in the active space gets
+   fetched + decrypted to build a `(host, username)` set; CSV rows
+   matching anything in that set are skipped. Lets re-imports be
+   idempotent without title-uniqueness assumptions.
+
+Imported items land at `/imported/YYYY-MM-DD` with tag `imported`.
 
 ## Things to NOT do
 
