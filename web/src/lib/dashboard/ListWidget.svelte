@@ -1,8 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { api, type Item } from '$lib/api';
-  import { generateItemKey, seal, toBase64, utf8Encode } from '$lib/crypto';
-  import { decryptItemBody, wrapItemKey } from '$lib/itemCrypto';
+  import { decryptItemBody, encryptBodyForSpace } from '$lib/itemCrypto';
   import { items } from '$lib/items.svelte';
   import { vault } from '$lib/vault.svelte';
   import { dashboardSettings } from '$lib/dashboardSettings.svelte';
@@ -90,15 +89,20 @@
     }
     saving = true;
     try {
-      const itemKey = generateItemKey();
-      const wrap = await wrapItemKey(itemKey, fullItem.space_id, vault.masterKey);
-      const body = JSON.stringify({ entries });
-      const encryptedBody = seal(utf8Encode(body), itemKey);
-      // Lists rotate the per-item key on every save in personal space; the
-      // wrapItemKey helper picks the right shape per space kind.
+      // encryptBodyForSpace handles the personal-vs-team wrap-shape +
+      // first-save-vs-subsequent-save split. For a team-space list with
+      // an existing wrap it reuses the item_key (no member_keys sent),
+      // which is what the server's update path requires.
+      const wrap = await encryptBodyForSpace({
+        body: JSON.stringify({ entries }),
+        spaceId: fullItem.space_id,
+        masterKey: vault.masterKey,
+        publicKey: vault.publicKey,
+        privateKey: vault.privateKey,
+        item: fullItem
+      });
       const updated = await api.updateItem(fullItem.id, {
         update_body: true,
-        encrypted_body: toBase64(encryptedBody),
         ...wrap
       });
       fullItem = updated;
