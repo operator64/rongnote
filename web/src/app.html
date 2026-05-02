@@ -42,6 +42,31 @@
           /* ignore */
         }
       })();
+
+      // Capture the FIRST uncaught error so +error.svelte can show what
+      // actually happened. SvelteKit normalises uncaught exceptions in
+      // navigation to a generic "Internal Error" — without this we'd
+      // never see the underlying message in the wild.
+      (function () {
+        if (window.__rongnote_lastError) return;
+        function capture(e) {
+          if (window.__rongnote_lastError) return;
+          var src = e && e.filename ? e.filename + ':' + (e.lineno || '?') : '';
+          var msg, stack;
+          if (e && e.error) {
+            msg = (e.error && e.error.message) || String(e.error);
+            stack = e.error && e.error.stack;
+          } else if (e && e.reason) {
+            msg = (e.reason && e.reason.message) || String(e.reason);
+            stack = e.reason && e.reason.stack;
+          } else {
+            msg = (e && e.message) || 'unknown error';
+          }
+          window.__rongnote_lastError = { msg: msg, stack: stack, src: src };
+        }
+        window.addEventListener('error', capture);
+        window.addEventListener('unhandledrejection', capture);
+      })();
     </script>
     %sveltekit.head%
   </head>
