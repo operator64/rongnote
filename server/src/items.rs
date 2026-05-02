@@ -320,10 +320,13 @@ async fn assert_member(
 /// Authorisation gate for any mutation against an existing item.
 ///   owner / editor → ok
 ///   viewer         → forbidden
-///   kiosk          → ok if item.created_by == user OR item.type == 'list'
+///   kiosk          → ok if item.created_by == user
+///                    OR item.type ∈ {'list', 'task'}
 ///
-/// Lists carve-out lets the always-on kiosk display tick off the shared
-/// shopping list even though the items belong to another household member.
+/// Lists + tasks carve-out lets the always-on kiosk display tick off the
+/// shared shopping list and household chores even though the items
+/// belong to another member. Everything else (events, notes, secrets)
+/// stays locked to the original creator from the kiosk's side.
 async fn assert_can_modify(
     state: &Arc<AppState>,
     user: &AuthUser,
@@ -336,7 +339,7 @@ async fn assert_can_modify(
         return Err(AppError::Forbidden);
     }
     if role == "kiosk" {
-        if item_type == "list" {
+        if matches!(item_type, "list" | "task") {
             return Ok(());
         }
         let row: Option<(Uuid,)> =

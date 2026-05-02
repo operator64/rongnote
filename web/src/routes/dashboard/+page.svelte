@@ -2,8 +2,10 @@
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import CalendarWidget from '$lib/dashboard/CalendarWidget.svelte';
+  import ClockWidget from '$lib/dashboard/ClockWidget.svelte';
   import ListWidget from '$lib/dashboard/ListWidget.svelte';
   import SettingsModal from '$lib/dashboard/SettingsModal.svelte';
+  import TasksWidget from '$lib/dashboard/TasksWidget.svelte';
   import TransitWidget from '$lib/dashboard/TransitWidget.svelte';
   import WeatherWidget from '$lib/dashboard/WeatherWidget.svelte';
   import { dashboardSettings } from '$lib/dashboardSettings.svelte';
@@ -77,10 +79,27 @@
   </header>
 
   <div class="grid">
-    <CalendarWidget />
-    <ListWidget />
-    <WeatherWidget />
-    <TransitWidget />
+    <!-- top-left: calendar (full cell) -->
+    <div class="cell">
+      <CalendarWidget />
+    </div>
+
+    <!-- top-right: list | tasks (2 columns) -->
+    <div class="cell split-cols">
+      <ListWidget />
+      <TasksWidget />
+    </div>
+
+    <!-- bottom-left: weather / clock (2 rows) -->
+    <div class="cell split-rows">
+      <WeatherWidget />
+      <ClockWidget />
+    </div>
+
+    <!-- bottom-right: transit (full cell) -->
+    <div class="cell">
+      <TransitWidget />
+    </div>
   </div>
 </div>
 
@@ -131,25 +150,77 @@
     grid-template-rows: 1fr 1fr;
     gap: 0;
   }
-  .grid > :global(section) {
+  /* Each cell takes one quadrant of the grid. Outer borders give the
+     tic-tac-toe lines between quadrants; the cell's own children draw
+     the inner divider when split. */
+  .cell {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     border-right: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
-    border-top: none;
-    border-left: none;
   }
-  .grid > :global(section:nth-child(2n)) { border-right: none; }
-  .grid > :global(section:nth-last-child(-n+2)) { border-bottom: none; }
+  .cell:nth-child(2n) { border-right: none; }
+  .cell:nth-last-child(-n+2) { border-bottom: none; }
 
-  /* iPad portrait — single column */
+  /* Single-widget cells let the section fill them. */
+  .cell > :global(section) {
+    flex: 1;
+    min-height: 0;
+    border: none;
+  }
+
+  /* Two-column split (e.g. list | tasks). Inner border between cols. */
+  .cell.split-cols {
+    flex-direction: row;
+  }
+  .cell.split-cols > :global(section) {
+    flex: 1 1 0;
+    min-width: 0;
+    border-right: 1px solid var(--border);
+  }
+  .cell.split-cols > :global(section:last-child) {
+    border-right: none;
+  }
+
+  /* Two-row split (e.g. weather / clock). Inner border between rows. */
+  .cell.split-rows {
+    flex-direction: column;
+  }
+  .cell.split-rows > :global(section) {
+    flex: 1 1 0;
+    min-height: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .cell.split-rows > :global(section:last-child) {
+    border-bottom: none;
+  }
+
+  /* iPad portrait — collapse everything into a single scrolling column.
+     Splits also collapse so each widget gets its own row. */
   @media (max-width: 820px) {
     .grid {
       grid-template-columns: 1fr;
       grid-template-rows: repeat(4, minmax(220px, 1fr));
     }
-    .grid > :global(section) {
+    .cell {
       border-right: none !important;
       border-bottom: 1px solid var(--border);
     }
-    .grid > :global(section:last-child) { border-bottom: none; }
+    .cell:last-child { border-bottom: none; }
+    .cell.split-cols, .cell.split-rows {
+      flex-direction: column;
+    }
+    .cell.split-cols > :global(section),
+    .cell.split-rows > :global(section) {
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      min-height: 180px;
+    }
+    .cell.split-cols > :global(section:last-child),
+    .cell.split-rows > :global(section:last-child) {
+      border-bottom: none;
+    }
   }
 </style>
