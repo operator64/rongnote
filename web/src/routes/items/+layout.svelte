@@ -73,11 +73,26 @@
       task: 'New task',
       snippet: 'New snippet',
       bookmark: 'New bookmark',
-      list: 'New list'
+      list: 'New list',
+      event: 'New event'
     };
+    // Events need a sensible default start/end so the calendar can place
+    // them; today 9-10 local works for a placeholder, the editor lets the
+    // user move it.
+    const extra: { start_at?: string; end_at?: string; all_day?: boolean } = {};
+    if (type === 'event') {
+      const start = new Date();
+      start.setHours(9, 0, 0, 0);
+      const end = new Date(start);
+      end.setHours(10, 0, 0, 0);
+      extra.start_at = start.toISOString();
+      extra.end_at = end.toISOString();
+      extra.all_day = false;
+    }
     const item = await api.createItem({
       title: titleByType[type] ?? 'Untitled',
-      type
+      type,
+      ...extra
     });
     items.upsert(item);
     await goto(`/items/${item.id}`);

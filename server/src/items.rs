@@ -61,6 +61,14 @@ pub struct ItemSummary {
     /// Only meaningful for type='task' (date-only).
     #[serde(default, with = "crate::b64::date_iso_option", skip_serializing_if = "Option::is_none")]
     due_at: Option<time::Date>,
+    /// Only meaningful for type='event'. Stored UTC, rendered local on the
+    /// client. Plaintext on the server (calendar range queries need it).
+    #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    start_at: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    end_at: Option<OffsetDateTime>,
+    #[serde(default)]
+    all_day: bool,
     done: bool,
     pinned: bool,
 }
@@ -103,6 +111,12 @@ pub struct ItemView {
     deleted_at: Option<OffsetDateTime>,
     #[serde(default, with = "crate::b64::date_iso_option", skip_serializing_if = "Option::is_none")]
     due_at: Option<time::Date>,
+    #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    start_at: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    end_at: Option<OffsetDateTime>,
+    #[serde(default)]
+    all_day: bool,
     #[serde(default)]
     done: bool,
     #[serde(default)]
@@ -160,6 +174,13 @@ pub struct CreateItemBody {
     path: String,
     #[serde(default, with = "crate::b64::date_iso_option")]
     due_at: Option<time::Date>,
+    /// Event timing fields (only meaningful for type='event').
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    start_at: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    end_at: Option<OffsetDateTime>,
+    #[serde(default)]
+    all_day: bool,
     #[serde(default)]
     done: bool,
     /// Optional space target. Falls back to the user's personal space.
@@ -186,6 +207,15 @@ pub struct UpdateItemBody {
     update_due_at: bool,
     #[serde(default, with = "crate::b64::date_iso_option")]
     due_at: Option<time::Date>,
+    /// Set this true to apply start_at + end_at + all_day (incl clearing).
+    #[serde(default)]
+    update_event_time: bool,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    start_at: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    end_at: Option<OffsetDateTime>,
+    #[serde(default)]
+    all_day: bool,
     done: Option<bool>,
     pinned: Option<bool>,
 }
@@ -211,6 +241,13 @@ pub struct ListQuery {
     trash: bool,
     /// Optional space filter. If absent, defaults to the user's personal space.
     space_id: Option<Uuid>,
+    /// Calendar range filter (UTC, RFC3339). When both are set, results are
+    /// limited to items whose start_at falls in [start_after, start_before).
+    /// Typically used together with type='event'.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    start_after: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    start_before: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -302,7 +339,7 @@ const ITEM_VIEW_SELECT: &str = r#"
            END AS key_wrap,
            i.blob_sha256,
            i.created_at, i.updated_at, i.deleted_at,
-           i.due_at, i.done, i.pinned
+           i.due_at, i.start_at, i.end_at, i.all_day, i.done, i.pinned
       FROM items i
       JOIN memberships m ON m.space_id = i.space_id
       LEFT JOIN item_member_keys mk
@@ -368,17 +405,23 @@ async fn list(
     }
     let rows = sqlx::query_as::<_, ItemSummary>(
         r#"
-        SELECT id, type, title, tags, path, updated_at, due_at, done, pinned
+        SELECT id, type, title, tags, path, updated_at,
+               due_at, start_at, end_at, all_day, done, pinned
           FROM items
          WHERE space_id = $1
            AND ($2::text IS NULL OR type = $2)
            AND CASE WHEN $3::bool THEN deleted_at IS NOT NULL ELSE deleted_at IS NULL END
-         ORDER BY pinned DESC, COALESCE(deleted_at, updated_at) DESC
+           AND ($4::timestamptz IS NULL OR (start_at IS NOT NULL AND start_at >= $4))
+           AND ($5::timestamptz IS NULL OR (start_at IS NOT NULL AND start_at <  $5))
+         ORDER BY pinned DESC,
+                  COALESCE(start_at, deleted_at, updated_at) DESC
         "#,
     )
     .bind(space_id)
     .bind(q.type_.as_deref())
     .bind(q.trash)
+    .bind(q.start_after)
+    .bind(q.start_before)
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(rows))
@@ -468,9 +511,10 @@ async fn create(
         r#"
         INSERT INTO items (
             space_id, type, title, encrypted_body, wrapped_item_key, blob_sha256,
-            tags, path, created_by, due_at, done
+            tags, path, created_by, due_at, done,
+            start_at, end_at, all_day
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING id
         "#,
     )
@@ -485,6 +529,9 @@ async fn create(
     .bind(user.user_id)
     .bind(body.due_at)
     .bind(body.done)
+    .bind(body.start_at)
+    .bind(body.end_at)
+    .bind(body.all_day)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -637,6 +684,9 @@ async fn update(
                due_at            = CASE WHEN $8::bool THEN $9 ELSE due_at END,
                done              = COALESCE($10, done),
                pinned            = COALESCE($11, pinned),
+               start_at          = CASE WHEN $12::bool THEN $13 ELSE start_at END,
+               end_at            = CASE WHEN $12::bool THEN $14 ELSE end_at END,
+               all_day           = CASE WHEN $12::bool THEN $15 ELSE all_day END,
                updated_at        = NOW()
          WHERE id = $1
         "#,
@@ -652,6 +702,10 @@ async fn update(
     .bind(body.due_at)
     .bind(body.done)
     .bind(body.pinned)
+    .bind(body.update_event_time)
+    .bind(body.start_at)
+    .bind(body.end_at)
+    .bind(body.all_day)
     .execute(&mut *tx)
     .await?;
 

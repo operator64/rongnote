@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import BookmarkEditor from '$lib/BookmarkEditor.svelte';
+  import EventEditor from '$lib/EventEditor.svelte';
   import FileEditor from '$lib/FileEditor.svelte';
   import ListEditor from '$lib/ListEditor.svelte';
   import NoteEditor from '$lib/NoteEditor.svelte';
@@ -59,6 +60,8 @@
   <BookmarkEditor {item} />
 {:else if item.type === 'list'}
   <ListEditor {item} />
+{:else if item.type === 'event'}
+  <EventEditor {item} />
 {:else}
   <NoteEditor {item} />
 {/if}

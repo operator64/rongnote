@@ -39,6 +39,10 @@ export interface ItemSummary {
   updated_at: string;
   /// 'YYYY-MM-DD' for tasks, null/undefined otherwise.
   due_at?: string | null;
+  /// RFC3339 UTC for events. null/undefined for non-events.
+  start_at?: string | null;
+  end_at?: string | null;
+  all_day?: boolean;
   done: boolean;
   pinned: boolean;
 }
@@ -64,6 +68,9 @@ export interface Item {
   updated_at: string;
   deleted_at?: string | null;
   due_at?: string | null;
+  start_at?: string | null;
+  end_at?: string | null;
+  all_day?: boolean;
   done: boolean;
   pinned: boolean;
 }
@@ -79,6 +86,9 @@ export interface ListItemsOptions {
   type?: ItemType;
   trash?: boolean;
   space_id?: string;
+  /// RFC3339 UTC. When both set, only items whose start_at falls in the range.
+  start_after?: string;
+  start_before?: string;
 }
 
 export class ApiError extends Error {
@@ -142,6 +152,10 @@ export interface CreateItemInput {
   tags?: string[];
   path?: string;
   due_at?: string | null;
+  /// Event timing — RFC3339 UTC. Only meaningful for type='event'.
+  start_at?: string | null;
+  end_at?: string | null;
+  all_day?: boolean;
   done?: boolean;
   space_id?: string;
 }
@@ -237,6 +251,11 @@ export interface UpdateItemInput {
   /// Set true to apply due_at (incl. clearing to null).
   update_due_at?: boolean;
   due_at?: string | null;
+  /// Set true to apply start_at + end_at + all_day (incl. clearing to null).
+  update_event_time?: boolean;
+  start_at?: string | null;
+  end_at?: string | null;
+  all_day?: boolean;
   done?: boolean;
   pinned?: boolean;
 }
@@ -299,6 +318,8 @@ export const api = {
     if (opts.type) params.set('type', opts.type);
     if (opts.trash) params.set('trash', 'true');
     if (opts.space_id) params.set('space_id', opts.space_id);
+    if (opts.start_after) params.set('start_after', opts.start_after);
+    if (opts.start_before) params.set('start_before', opts.start_before);
     const qs = params.toString();
     return request<ItemSummary[]>('GET', `/api/v1/items${qs ? `?${qs}` : ''}`);
   },

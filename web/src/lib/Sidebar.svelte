@@ -75,6 +75,13 @@
     {#if !inTrash}<span class="count">{items.list.length}</span>{/if}
   </button>
 
+  {#if !inTrash}
+    <a class="row-btn" href="/items/calendar">
+      <ItemIcon type="event" />
+      <span class="grow">calendar</span>
+    </a>
+  {/if}
+
   {#if !inTrash && items.typeCounts.length > 0}
     <div class="section-head">by type</div>
     {#each items.typeCounts as t (t.type)}
@@ -175,9 +182,11 @@
     border-radius: 0;
     white-space: nowrap;
     overflow: hidden;
+    text-decoration: none;
   }
   .row-btn:hover {
     background: rgba(127, 127, 127, 0.08);
+    text-decoration: none;
   }
   .row-btn.active {
     background: rgba(127, 127, 127, 0.18);

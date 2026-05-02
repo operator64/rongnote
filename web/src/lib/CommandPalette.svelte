@@ -107,6 +107,36 @@
     },
     {
       kind: 'action',
+      label: 'new event',
+      hint: 'create',
+      run: async () => {
+        // Default: today, 9:00 — 10:00 local. The editor lets the user
+        // adjust right after.
+        const start = new Date();
+        start.setHours(9, 0, 0, 0);
+        const end = new Date(start);
+        end.setHours(10, 0, 0, 0);
+        const item = await api.createItem({
+          title: 'New event',
+          type: 'event',
+          start_at: start.toISOString(),
+          end_at: end.toISOString(),
+          all_day: false
+        });
+        items.upsert(item);
+        await goto(`/items/${item.id}`);
+      }
+    },
+    {
+      kind: 'action',
+      label: 'open calendar',
+      hint: 'view',
+      run: async () => {
+        await goto('/items/calendar');
+      }
+    },
+    {
+      kind: 'action',
       label: 'upload file',
       hint: 'create',
       run: async () => {

@@ -129,6 +129,7 @@ class ItemStore {
       'note',
       'task',
       'list',
+      'event',
       'secret',
       'snippet',
       'bookmark',
@@ -139,10 +140,10 @@ class ItemStore {
       'note',
       'task',
       'list',
+      'event',
       'secret',
       'snippet',
       'bookmark',
-      'event',
       'file'
     ];
     return order
