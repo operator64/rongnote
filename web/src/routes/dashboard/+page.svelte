@@ -11,13 +11,17 @@
   import { spaces } from '$lib/spaces.svelte';
   import { vault } from '$lib/vault.svelte';
 
-  /// Always-live dashboard. Pauses the vault's idle-lock while the route
-  /// is mounted and resumes it on destroy. The user can lock manually
-  /// from the header. Widgets each own their own polling cadence — the
-  /// dashboard itself just composes the layout.
+  /// Standalone dashboard route, sibling to /items so it renders without
+  /// the items chrome (sidebar + list pane). Ideal for a wall-mounted
+  /// kiosk display: pauses idle-lock while mounted, header offers manual
+  /// refresh / settings / lock.
 
   let settingsOpen = $state(false);
   let now = $state(new Date());
+
+  // Kiosk-style users get no "back to items" button — they have nothing
+  // useful there. Personal users do.
+  let kioskOnly = $derived(spaces.isKioskOnly);
 
   onMount(() => {
     dashboardSettings.load();
@@ -25,8 +29,6 @@
 
     const tick = setInterval(() => (now = new Date()), 30_000);
 
-    // Make sure spaces + items are hydrated so the calendar / list
-    // widgets have data to read from.
     if (spaces.list.length === 0) void spaces.refresh();
     if (items.list.length === 0) void items.refresh();
 
@@ -41,14 +43,11 @@
 
   function lockNow() {
     vault.lock();
-    goto('/items', { replaceState: true });
+    goto('/login', { replaceState: true });
   }
 
   async function refreshAll() {
     await items.refresh();
-    // Widgets watch items.list / their own timers; the items.refresh
-    // above is enough to repaint calendar + list. Weather + transit
-    // refresh themselves on the same trigger via their internal hooks.
   }
 
   let nowLabel = $derived(
@@ -61,7 +60,9 @@
 
 <div class="page">
   <header class="bar">
-    <button type="button" onclick={() => goto('/items')}>← back</button>
+    {#if !kioskOnly}
+      <button type="button" onclick={() => goto('/items')}>← items</button>
+    {/if}
     <span class="title">dashboard</span>
     <span class="muted small">{dateLabel} · {nowLabel}</span>
     <span class="grow"></span>
@@ -70,7 +71,9 @@
     </span>
     <button type="button" onclick={refreshAll} title="reload data">↻ refresh</button>
     <button type="button" onclick={() => (settingsOpen = true)} title="settings">⚙</button>
-    <button type="button" onclick={lockNow} title="vault sperren">🔒 lock</button>
+    {#if !kioskOnly}
+      <button type="button" onclick={lockNow} title="vault sperren">🔒 lock</button>
+    {/if}
   </header>
 
   <div class="grid">
@@ -89,7 +92,7 @@
   .page {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    height: 100vh;
     overflow: hidden;
   }
   .bar {

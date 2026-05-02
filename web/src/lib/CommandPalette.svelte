@@ -140,7 +140,7 @@
       label: 'open dashboard',
       hint: 'view',
       run: async () => {
-        await goto('/items/dashboard');
+        await goto('/dashboard');
       }
     },
     {

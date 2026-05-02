@@ -10,6 +10,22 @@ class SpaceStore {
     this.list.find((s) => s.id === this.activeId) ?? this.personal()
   );
 
+  /// True iff every team membership of this user is role='kiosk'. The
+  /// personal space (always 'owner') is intentionally excluded — even
+  /// kiosk display accounts get a personal space at register time, but
+  /// it stays empty for them.
+  ///
+  /// Used to route post-login traffic straight to /dashboard and to
+  /// hide the "back to items" / "lock vault" buttons there: a real
+  /// kiosk on a wall display has no use for the items chrome.
+  isKioskOnly = $derived<boolean>(
+    this.list.length > 0 &&
+      this.list.some((s) => s.kind === 'team' && s.role === 'kiosk') &&
+      this.list.every(
+        (s) => s.kind === 'personal' || s.role === 'kiosk'
+      )
+  );
+
   personal(): Space | null {
     return this.list.find((s) => s.kind === 'personal') ?? null;
   }

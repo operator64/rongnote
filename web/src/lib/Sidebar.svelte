@@ -80,7 +80,7 @@
       <ItemIcon type="event" />
       <span class="grow">calendar</span>
     </a>
-    <a class="row-btn" href="/items/dashboard">
+    <a class="row-btn" href="/dashboard">
       <LayoutDashboard size={14} />
       <span class="grow">dashboard</span>
     </a>

@@ -212,7 +212,7 @@ export interface Space {
   name: string;
   kind: 'personal' | 'team';
   owner_id: string;
-  role: 'owner' | 'editor' | 'viewer';
+  role: 'owner' | 'editor' | 'viewer' | 'kiosk' | 'kiosk';
   member_count: number;
   created_at: string;
 }
@@ -220,7 +220,7 @@ export interface Space {
 export interface Member {
   user_id: string;
   email: string;
-  role: 'owner' | 'editor' | 'viewer';
+  role: 'owner' | 'editor' | 'viewer' | 'kiosk' | 'kiosk';
   /// base64 public key for sealing item keys (Phase B)
   public_key: string;
   joined_at: string;
@@ -382,7 +382,7 @@ export const api = {
   addMember: (
     spaceId: string,
     email: string,
-    role: 'editor' | 'viewer',
+    role: 'editor' | 'viewer' | 'kiosk',
     item_keys: { item_id: string; sealed_item_key: string }[] = []
   ) =>
     request<Member>('POST', `/api/v1/spaces/${spaceId}/members`, {
@@ -390,7 +390,7 @@ export const api = {
       role,
       item_keys
     }),
-  setMemberRole: (spaceId: string, userId: string, role: 'editor' | 'viewer') =>
+  setMemberRole: (spaceId: string, userId: string, role: 'editor' | 'viewer' | 'kiosk') =>
     request<void>('PATCH', `/api/v1/spaces/${spaceId}/members/${userId}`, { role }),
   removeMember: (spaceId: string, userId: string) =>
     request<void>('DELETE', `/api/v1/spaces/${spaceId}/members/${userId}`),

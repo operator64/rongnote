@@ -317,6 +317,41 @@ async fn assert_member(
     row.map(|r| r.0).ok_or(AppError::Forbidden)
 }
 
+/// Authorisation gate for any mutation against an existing item.
+///   owner / editor → ok
+///   viewer         → forbidden
+///   kiosk          → ok if item.created_by == user OR item.type == 'list'
+///
+/// Lists carve-out lets the always-on kiosk display tick off the shared
+/// shopping list even though the items belong to another household member.
+async fn assert_can_modify(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    item_id: Uuid,
+    space_id: Uuid,
+    item_type: &str,
+) -> AppResult<()> {
+    let role = assert_member(state, user, space_id).await?;
+    if role == "viewer" {
+        return Err(AppError::Forbidden);
+    }
+    if role == "kiosk" {
+        if item_type == "list" {
+            return Ok(());
+        }
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT created_by FROM items WHERE id = $1")
+                .bind(item_id)
+                .fetch_optional(&state.pool)
+                .await?;
+        let created_by = row.ok_or(AppError::NotFound)?.0;
+        if created_by != user.user_id {
+            return Err(AppError::Forbidden);
+        }
+    }
+    Ok(())
+}
+
 async fn space_kind(state: &Arc<AppState>, space_id: Uuid) -> AppResult<String> {
     let row: (String,) = sqlx::query_as("SELECT kind FROM spaces WHERE id = $1")
         .bind(space_id)
@@ -602,10 +637,14 @@ async fn update(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    let role = assert_member(&state, &user, existing.space_id).await?;
-    if role == "viewer" {
-        return Err(AppError::Forbidden);
-    }
+    assert_can_modify(
+        &state,
+        &user,
+        existing.id(),
+        existing.space_id(),
+        existing.type_str(),
+    )
+    .await?;
 
     if existing.deleted_at.is_some() {
         return Err(AppError::BadRequest(
@@ -748,7 +787,7 @@ async fn move_item(
     }
 
     let from_role = assert_member(&state, &user, existing.space_id).await?;
-    if from_role == "viewer" {
+    if matches!(from_role.as_str(), "viewer" | "kiosk") {
         return Err(AppError::Forbidden);
     }
     if existing.space_id == body.target_space_id {
@@ -758,7 +797,7 @@ async fn move_item(
     }
 
     let to_role = assert_member(&state, &user, body.target_space_id).await?;
-    if to_role == "viewer" {
+    if matches!(to_role.as_str(), "viewer" | "kiosk") {
         return Err(AppError::Forbidden);
     }
 
@@ -989,6 +1028,15 @@ async fn restore_version(
         return Err(AppError::NotFound);
     }
 
+    assert_can_modify(
+        &state,
+        &user,
+        existing.id(),
+        existing.space_id(),
+        existing.type_str(),
+    )
+    .await?;
+
     // Snapshot current state before restoring (so the restore is itself
     // versioned + reversible).
     snapshot_version(&state.pool, &existing, user.user_id).await.ok();
@@ -1064,7 +1112,7 @@ async fn delete_one(
     .fetch_optional(&state.pool)
     .await?;
     let (space_id, role, blob_sha256) = row.ok_or(AppError::NotFound)?;
-    if role == "viewer" {
+    if matches!(role.as_str(), "viewer" | "kiosk") {
         return Err(AppError::Forbidden);
     }
     if q.hard {
@@ -1148,7 +1196,10 @@ async fn restore(
     .fetch_optional(&state.pool)
     .await?;
     let role = role.ok_or(AppError::NotFound)?.0;
-    if role == "viewer" {
+    // Restore-from-trash and version-restore are both edit-shaped — kiosk
+    // can only do them on their own items, so ban the role outright (the
+    // dashboard never trashes anything anyway).
+    if matches!(role.as_str(), "viewer" | "kiosk") {
         return Err(AppError::Forbidden);
     }
 

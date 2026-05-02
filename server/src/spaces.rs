@@ -106,11 +106,11 @@ pub struct LookupUserView {
 // --- Helpers ---
 
 fn validate_role(role: &str) -> AppResult<()> {
-    if matches!(role, "owner" | "editor" | "viewer") {
+    if matches!(role, "owner" | "editor" | "viewer" | "kiosk") {
         Ok(())
     } else {
         Err(AppError::BadRequest(
-            "role must be one of owner|editor|viewer".into(),
+            "role must be one of owner|editor|viewer|kiosk".into(),
         ))
     }
 }

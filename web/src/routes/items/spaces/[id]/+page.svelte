@@ -17,7 +17,7 @@
 
   let inviting = $state(false);
   let inviteEmail = $state('');
-  let inviteRole = $state<'editor' | 'viewer'>('editor');
+  let inviteRole = $state<'editor' | 'viewer' | 'kiosk'>('editor');
   let busy = $state(false);
 
   let isOwner = $derived(space?.role === 'owner');
@@ -97,7 +97,7 @@
     }
   }
 
-  async function changeRole(m: Member, role: 'editor' | 'viewer') {
+  async function changeRole(m: Member, role: 'editor' | 'viewer' | 'kiosk') {
     if (m.role === 'owner') return;
     busy = true;
     error = '';
@@ -170,6 +170,7 @@
       <select bind:value={inviteRole} disabled={busy}>
         <option value="editor">editor</option>
         <option value="viewer">viewer</option>
+        <option value="kiosk">kiosk (always-live display)</option>
       </select>
       <button type="submit" disabled={busy || !inviteEmail.trim()}>send</button>
       <button
@@ -210,10 +211,11 @@
                   value={m.role}
                   disabled={busy}
                   onchange={(e) =>
-                    void changeRole(m, (e.currentTarget as HTMLSelectElement).value as 'editor' | 'viewer')}
+                    void changeRole(m, (e.currentTarget as HTMLSelectElement).value as 'editor' | 'viewer' | 'kiosk')}
                 >
                   <option value="editor">editor</option>
                   <option value="viewer">viewer</option>
+                  <option value="kiosk">kiosk</option>
                 </select>
               {:else}
                 {m.role}

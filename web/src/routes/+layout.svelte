@@ -7,6 +7,7 @@
   import { ensureReady } from '$lib/crypto';
   import { applyPrefs, prefs } from '$lib/prefs.svelte';
   import { session } from '$lib/session.svelte';
+  import { spaces } from '$lib/spaces.svelte';
   import { vault } from '$lib/vault.svelte';
 
   let { children } = $props();
@@ -24,12 +25,29 @@
 
   onMount(async () => {
     await Promise.all([ensureReady(), session.refresh()]);
-    if (session.user) await vault.tryRestore();
+    if (session.user) {
+      // tryRestore + spaces.refresh in parallel — spaces only needs auth,
+      // not the unwrapped vault. Awaiting both before enforceAuth means
+      // a kiosk-only user reloading the page lands on /dashboard with
+      // no /items flicker.
+      await Promise.all([vault.tryRestore(), spaces.refresh()]);
+    }
     enforceAuth();
   });
 
   $effect(() => {
     if (!session.loading) enforceAuth();
+  });
+
+  /// Once spaces hydrate, kick a kiosk-only user off /items (which they
+  /// arrived at as the safe default) onto /dashboard.
+  $effect(() => {
+    if (!session.user) return;
+    if (!spaces.isKioskOnly) return;
+    const path = $page.url.pathname;
+    if (path.startsWith('/items') || path === '/') {
+      goto('/dashboard', { replaceState: true });
+    }
   });
 
   // Push prefs to the DOM whenever they change. Initial paint is handled by
@@ -45,7 +63,13 @@
     if (!session.user && !isPublic) {
       goto('/login', { replaceState: true });
     } else if (session.user && (path === '/' || isPublic) && !alwaysAllow) {
-      goto('/items', { replaceState: true });
+      // Kiosk-only users land on /dashboard — they have nothing to do
+      // in /items. Defer the kiosk decision until spaces have loaded;
+      // until then, drop them at /items as a safe default and the
+      // dashboard will pick them up on the next enforceAuth tick once
+      // spaces.list populates.
+      const target = spaces.isKioskOnly ? '/dashboard' : '/items';
+      goto(target, { replaceState: true });
     }
   }
 
