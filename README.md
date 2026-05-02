@@ -17,6 +17,10 @@ a small crew or just yourself.
   one-click toggle from the list, sorted open-first.
 - **Lists** — checklists with drag-reorder, Enter to add, Backspace to remove,
   per-item checkboxes, "clear N done" sweep. Shopping lists, packing lists.
+- **Events** — title, all-day toggle, start/end pickers, location,
+  description. Plaintext start/end timestamps on the server enable cheap
+  calendar-range queries; everything else is encrypted. See
+  `/items/calendar` for the month-grid view across all your spaces.
 - **Secrets** — passwords, TOTP codes (live with countdown), generator with
   charset toggles, copy-with-30s-clipboard-clear, reveal-with-10s-auto-hide,
   HIBP breach check (k-anonymity prefix query, never sends the password).
@@ -53,6 +57,11 @@ a small crew or just yourself.
   becomes an encrypted secret in the active space. Smart dedup compares
   `(host, username)` against decrypted existing secrets, so re-imports
   don't double up.
+- **Calendar** — `/items/calendar` month-grid view that unions events
+  across every space you're a member of, color-coded per space (personal
+  blue, team spaces a deterministic palette). Selected day pane on the
+  right with full event details. Click an event to open the editor;
+  "+ event" creates one on the selected day.
 - **Audit log** — every secret read, item write, share creation, and auth
   event recorded. Per-user view at `/items/audit`.
 - **Encrypted backup** — one-click `.tar` export with all your encrypted data.
@@ -75,12 +84,12 @@ a small crew or just yourself.
 
 - Monospace, six-colour theme (light/dark/auto), adjustable font size,
   persistent in `localStorage`.
-- Cmd-K command palette: `new note/task/list/secret/snippet/bookmark`,
-  `upload file`, `today's daily note`, `manage spaces`, `new team space`,
-  `move current item to space…`, `share current item via link`,
-  `import secrets from CSV`, `manage passkeys`, `audit log`,
-  `export backup`, `version history`, theme/font controls. Arrow-key
-  navigation scrolls active row into view.
+- Cmd-K command palette: `new note/task/list/event/secret/snippet/bookmark`,
+  `upload file`, `today's daily note`, `open calendar`, `manage spaces`,
+  `new team space`, `move current item to space…`,
+  `share current item via link`, `import secrets from CSV`,
+  `manage passkeys`, `audit log`, `export backup`, `version history`,
+  theme/font controls. Arrow-key navigation scrolls active row into view.
 - **Mobile** (`<700px`): stack-mode (list OR detail, never both); sidebar
   becomes a slide-in drawer; hamburger + search buttons in the pane head;
   status bar drops non-essential controls.
@@ -194,6 +203,8 @@ Hot-reload works for Svelte; the Rust server needs manual restart.
                  │   /api/v1/auth          session cookies     │
                  │     /passkey            register/login/list │
                  │   /api/v1/items         CRUD per type       │
+                 │     ?type=event&        calendar range query│
+                 │       start_after=      (events list view)  │
                  │     /:id/move           move between spaces │
                  │     /:id/versions       snapshots + restore │
                  │   /api/v1/spaces        team space mgmt     │
@@ -241,17 +252,19 @@ Shipped:
       tab host, copies user / pass / TOTP with auto-clear
 - [x] **CSV import** — Firefox / Chrome / Bitwarden / 1Password / KeePass,
       smart `(host, username)` dedup
+- [x] **Calendar** — `event` item type + `/items/calendar` month-grid
+      view, multi-space union with per-space colours
 - [x] **Closeable signups** via `REGISTRATION_OPEN` env flag
 - [x] CI/CD — GitHub Actions → ghcr.io → docker compose
 
 Open:
 
-- [ ] **CalDAV** — calendar items + iOS/macOS/Thunderbird sync
 - [ ] Form-fill in the browser extension (currently copy-to-clipboard only)
 - [ ] Save-from-page in the extension (capture new credentials from a login form)
 - [ ] Vault import (counterpart to encrypted export — currently restore is
       manual SQL + blob copy per [deploy.md](deploy.md))
 - [ ] Mozilla-signed extension build (currently temporary-add-on / unpacked)
+- [ ] Calendar week-view + drag-resize + recurring events
 
 ## Documentation
 

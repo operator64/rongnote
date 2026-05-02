@@ -77,7 +77,7 @@ in production.
 │           ├── totp.ts            RFC 6238 via Web Crypto
 │           ├── password.ts        random PW generator
 │           ├── *Editor.svelte     one per type: Note, Secret, Task, List,
-│           │                       Snippet, Bookmark, File
+│           │                       Event, Snippet, Bookmark, File
 │           ├── PasswordGenerator.svelte  inline popover in SecretEditor
 │           ├── hibp.ts            k-anonymity SHA-1 prefix query
 │           ├── ItemIcon.svelte    Lucide-icon-by-type
@@ -174,6 +174,8 @@ historical cases:
 - 0011 — item_versions table
 - 0012 — extend `items.type` CHECK to include `'list'`
 - 0013 — `item_member_keys` table for sealed-box per-member wraps in team spaces
+- 0014 — events: `items.start_at`, `end_at`, `all_day` + partial index on
+         `(space_id, start_at)` for cheap calendar-range queries
 
 Going forward, never TRUNCATE in a migration. Add columns, backfill,
 deprecate. **Use `--` for SQL comments**, not Rust-style `///` — the latter
@@ -356,6 +358,35 @@ Don't try to plumb auth through the SPA's tab — extension and SPA are
 separate origins, and Firefox WebExtensions with `host_permissions`
 make their own credentialed fetches anyway. Just keep them
 independent.
+
+## Calendar
+
+`event` is a regular item type. The thing the calendar needs that other
+items don't: queryable time fields. Migration 0014 added `start_at`,
+`end_at` (timestamptz, UTC) and `all_day` (bool). They're plaintext on
+the server — same trade-off as titles/tags/timestamps — so the
+calendar view can ask "events between X and Y" without decrypting
+every body.
+
+`items.start_at` storage:
+- Timed event: the actual start time, UTC
+- All-day event: midnight UTC of the start day, end_at is **next** midnight
+  UTC (iCal DTEND exclusive-end convention). The EventEditor displays the
+  *inclusive* last day in the date picker and converts back on save.
+
+`/api/v1/items?type=event&start_after=...&start_before=...` filters by
+the partial index `(space_id, start_at)`. Useful only with a space
+filter — without it, the index isn't used.
+
+`/items/calendar` does N parallel listItems calls, one per space the
+user is a member of, then unions + colour-codes per space. Personal is
+always accent-blue; team spaces cycle through TEAM_COLORS ordered by
+`created_at` so the same team keeps its colour across reloads.
+
+The page's `$effect` tracks `items.list` so any mutation through
+another route (editor save, sidebar +, palette) repaints the calendar
+without a navigate-away-and-back. The server fetch itself doesn't
+touch items.list, so no loop.
 
 ## CSV import
 

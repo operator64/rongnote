@@ -111,7 +111,8 @@ realistic data volumes.
 | `users.encrypted_private_key` | yes (opaque ciphertext) |
 | `items.title` | yes |
 | `items.tags`, `items.path` | yes |
-| `items.type`, timestamps, `items.due_at`, `items.done` | yes |
+| `items.type`, timestamps, `items.due_at`, `items.done`, `items.pinned` | yes |
+| `items.start_at`, `items.end_at`, `items.all_day` (event timing) | yes |
 | `items.encrypted_body` | **ciphertext** |
 | `items.wrapped_item_key` | **ciphertext** (personal space; NULL for team space) |
 | `item_member_keys.sealed_item_key` | **ciphertext** (team space, one per member) |
