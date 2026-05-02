@@ -28,15 +28,21 @@ mod session;
 mod shares;
 mod spaces;
 mod static_assets;
+mod transit;
 
 use config::Config;
 use passkey::PasskeyService;
+use transit::TransitCache;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
     pub config: Config,
     pub passkey: Arc<PasskeyService>,
+    /// Shared outbound HTTP client for the VRR EFA proxy. Reuses
+    /// connection pooling + DNS cache across requests.
+    pub http: reqwest::Client,
+    pub transit_cache: TransitCache,
 }
 
 #[tokio::main]
@@ -56,10 +62,17 @@ async fn main() -> anyhow::Result<()> {
 
     let passkey_service = Arc::new(PasskeyService::new(&config)?);
 
+    let http = reqwest::Client::builder()
+        .user_agent("rongnote/1.0 (+https://github.com/operator64/rongnote)")
+        .timeout(std::time::Duration::from_secs(8))
+        .build()?;
+
     let state = Arc::new(AppState {
         pool,
         config: config.clone(),
         passkey: passkey_service,
+        http,
+        transit_cache: transit::new_cache(),
     });
 
     let auth_routes = auth::router().nest("/passkey", passkey::router());
@@ -72,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
         .nest("/audit_log", audit::router())
         .nest("/export", export::router())
         .nest("/spaces", spaces::router())
+        .nest("/transit", transit::router())
         .merge(shares::router());
 
     let app = Router::new()

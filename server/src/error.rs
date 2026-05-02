@@ -22,6 +22,10 @@ pub enum AppError {
     #[error("{0}")]
     Conflict(String),
 
+    /// 502 — an upstream service we proxy (e.g. VRR EFA) failed.
+    #[error("{0}")]
+    BadGateway(String),
+
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 
@@ -37,6 +41,7 @@ impl AppError {
             AppError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+            AppError::BadGateway(_) => (StatusCode::BAD_GATEWAY, "bad_gateway"),
             AppError::Db(sqlx::Error::RowNotFound) => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Db(_) | AppError::Other(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
@@ -54,7 +59,7 @@ impl IntoResponse for AppError {
             tracing::debug!(error = %self, status = %status, "request error");
         }
         let message = match &self {
-            AppError::BadRequest(m) | AppError::Conflict(m) => m.clone(),
+            AppError::BadRequest(m) | AppError::Conflict(m) | AppError::BadGateway(m) => m.clone(),
             other => other.to_string(),
         };
         (status, Json(json!({ "error": code, "message": message }))).into_response()

@@ -1,25 +1,18 @@
 <script lang="ts">
+  import { api, ApiError, type TransitDeparture } from '$lib/api';
   import { dashboardSettings } from '$lib/dashboardSettings.svelte';
   import Widget from './Widget.svelte';
 
-  /// Public transport departures via db-rest (https://v6.db.transport.rest).
-  /// Free, OSM-funded, DB-data-backed. Up to 2 stops side-by-side. The
-  /// settings modal handles GPS-based "find nearest" + manual stop IDs.
-
-  type Departure = {
-    tripId: string;
-    when: string | null;
-    plannedWhen: string | null;
-    delay: number | null;
-    direction: string;
-    line: { name: string; productName?: string; product?: string };
-    cancelled?: boolean;
-  };
+  /// Public transport departures via our /api/v1/transit proxy, which
+  /// fetches VRR EFA (https://efa.vrr.de) on the server. Direct browser
+  /// fetches against EFA are blocked by CORS, so the proxy is what makes
+  /// this work without a third-party intermediary. Up to 2 stops side
+  /// by side. Settings modal does GPS-based "find nearest" + manual IDs.
 
   type StopState = {
     id: string;
     label: string;
-    deps: Departure[];
+    deps: TransitDeparture[];
     error: string;
     loading: boolean;
   };
@@ -35,31 +28,21 @@
     return () => clearInterval(id);
   });
 
-  /// Fetch one stop's departures with one retry on 5xx (db-rest's upstream
-  /// HAFAS proxy throws transient 500s several times an hour). Linkbox
-  /// shows the previous cached departures meanwhile.
-  async function fetchOnce(id: string): Promise<Departure[]> {
-    const url =
-      `https://v6.db.transport.rest/stops/${encodeURIComponent(id)}/departures` +
-      `?duration=60&results=8`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      const tag = res.status >= 500 ? 'db down' : `db-rest ${res.status}`;
-      throw new Error(body ? `${tag}: ${body.slice(0, 80)}` : tag);
-    }
-    const json = (await res.json()) as { departures: Departure[] };
-    return json.departures ?? [];
+  /// One retry on 502 — that's our server's "vrr efa unavailable" status,
+  /// usually a transient upstream wobble. 4xx (bad stop id) shouldn't
+  /// retry. Stale departures stay visible meanwhile via the renderer.
+  async function fetchOnce(id: string): Promise<TransitDeparture[]> {
+    return await api.transitDepartures(id, 8);
   }
 
-  async function fetchWithRetry(id: string): Promise<Departure[]> {
+  async function fetchWithRetry(id: string): Promise<TransitDeparture[]> {
     try {
       return await fetchOnce(id);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      // Only retry transient upstream errors. 4xx is a config problem
-      // (bad stop id) — retrying won't help.
-      if (msg.startsWith('db down') || msg.includes('NetworkError')) {
+      const isUpstreamWobble =
+        err instanceof ApiError && err.status >= 500;
+      const isNetwork = !(err instanceof ApiError);
+      if (isUpstreamWobble || isNetwork) {
         await new Promise((r) => setTimeout(r, 1500));
         return await fetchOnce(id);
       }
@@ -113,15 +96,24 @@
     return Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
   }
 
+  /// Server gives us a clean `product` bucket; fall back to name prefix
+  /// (covers both "S 1" db-style and "S1" vrr-style) for older payloads.
   function lineColor(name: string, product?: string): string {
-    const n = name.toLowerCase();
-    if (n.startsWith('s ')) return '#006e34';
-    if (n.startsWith('u ') || n.startsWith('u-')) return '#c50e1f';
-    if (n.startsWith('ic ') || n.startsWith('ec ')) return '#005c8c';
+    switch (product) {
+      case 'suburban':     return '#006e34';
+      case 'subway':       return '#c50e1f';
+      case 'tram':         return '#1a7f37';
+      case 'bus':          return '#5e2e8b';
+      case 'regional':     return '#a52429';
+      case 'longdistance': return '#1f1f1f';
+      case 'ferry':        return '#0782bf';
+    }
+    const n = name.toLowerCase().replace(/\s+/g, '');
+    if (n.startsWith('s')) return '#006e34';
+    if (n.startsWith('u')) return '#c50e1f';
     if (n.startsWith('ice')) return '#1f1f1f';
-    if (n.startsWith('re ') || n.startsWith('rb ')) return '#a52429';
-    if (product === 'bus' || n.startsWith('bus')) return '#5e2e8b';
-    if (product === 'tram') return '#1a7f37';
+    if (n.startsWith('ic') || n.startsWith('ec')) return '#005c8c';
+    if (n.startsWith('re') || n.startsWith('rb')) return '#a52429';
     return '#444';
   }
 
@@ -158,10 +150,10 @@
             <div class="muted small">keine abfahrten in 60 min.</div>
           {:else}
             {#if s.error}
-              <div class="warn small" title={s.error}>⚠ db down — letzter erfolgreicher pull</div>
+              <div class="warn small" title={s.error}>⚠ vrr down — letzter erfolgreicher pull</div>
             {/if}
-            {#each s.deps.slice(0, 6) as d (d.tripId)}
-              {@const m = minutesFromNow(d.when ?? d.plannedWhen)}
+            {#each s.deps.slice(0, 6) as d (d.trip_id)}
+              {@const m = minutesFromNow(d.when ?? d.planned_when)}
               <div class="dep" class:cancel={d.cancelled}>
                 <span class="line" style={`background: ${lineColor(d.line.name, d.line.product)};`}>
                   {d.line.name}

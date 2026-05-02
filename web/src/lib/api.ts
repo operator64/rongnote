@@ -426,5 +426,33 @@ export const api = {
     }
     const buf = await res.arrayBuffer();
     return new Uint8Array(buf);
-  }
+  },
+
+  // ----- Transit (VRR EFA proxy) -----
+  transitDepartures: (stopId: string, limit = 8) =>
+    request<TransitDeparture[]>(
+      'GET',
+      `/api/v1/transit/departures?stop_id=${encodeURIComponent(stopId)}&limit=${limit}`
+    ),
+  transitNearby: (lat: number, lon: number, limit = 5) =>
+    request<TransitStop[]>(
+      'GET',
+      `/api/v1/transit/nearby?lat=${lat}&lon=${lon}&limit=${limit}`
+    )
 };
+
+export interface TransitDeparture {
+  trip_id: string;
+  when: string | null;
+  planned_when: string | null;
+  delay: number | null;
+  direction: string;
+  line: { name: string; product?: string };
+  cancelled: boolean;
+}
+
+export interface TransitStop {
+  id: string;
+  name: string;
+  distance: number;
+}

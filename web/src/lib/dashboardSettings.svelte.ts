@@ -35,7 +35,20 @@ class DashboardStore {
       const raw = window.localStorage.getItem(KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<DashboardSettings>;
-        this.s = { ...defaults(), ...parsed };
+        const next = { ...defaults(), ...parsed };
+        // v1.6 migration: db-rest IDs are 7-8 digit numerics (e.g.
+        // 8000085 = Düsseldorf Hbf). VRR IDs are 8 digits starting
+        // with 200 / 211 / etc. Anything starting with a leading 8
+        // and 7-8 chars is almost certainly an old db-rest IBNR — drop
+        // those so the user re-runs "find nearest" and gets fresh
+        // VRR-format IDs.
+        next.stop_ids = next.stop_ids.filter(
+          (id) => !/^8\d{6,7}$/.test(id)
+        );
+        if (next.stop_ids.length !== next.stop_labels.length) {
+          next.stop_labels = next.stop_labels.slice(0, next.stop_ids.length);
+        }
+        this.s = next;
       }
     } catch {
       // ignore corrupt JSON

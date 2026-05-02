@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { api } from '$lib/api';
   import { dashboardSettings } from '$lib/dashboardSettings.svelte';
 
   type Props = { onClose: () => void };
@@ -59,10 +60,7 @@
     geoBusy = true;
     geoErr = '';
     try {
-      const url = `https://v6.db.transport.rest/stops/nearby?latitude=${lat}&longitude=${lon}&results=2`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`db-rest ${res.status}`);
-      const stops = (await res.json()) as { id: string; name: string }[];
+      const stops = await api.transitNearby(parseFloat(lat), parseFloat(lon), 2);
       if (stops[0]) {
         stop1 = stops[0].id;
         stop1Label = stops[0].name;
@@ -144,7 +142,7 @@
       </div>
       {#if geoErr}<div class="danger small">{geoErr}</div>{/if}
 
-      <h3>öpnv-haltestellen (db-rest IDs, max 2)</h3>
+      <h3>öpnv-haltestellen (VRR IDs, max 2)</h3>
       <div class="row">
         <button
           type="button"
@@ -152,12 +150,12 @@
           disabled={geoBusy || !lat || !lon}
           title="findet die zwei nächsten haltestellen"
         >zwei nächste finden</button>
-        <span class="muted small">oder IDs aus <code>v6.db.transport.rest</code> manuell:</span>
+        <span class="muted small">oder VRR-Stop-IDs (z.B. <code>20018235</code> für Düsseldorf Hbf):</span>
       </div>
       <div class="row">
         <label class="field grow">
           <span class="lbl">stop 1</span>
-          <input type="text" bind:value={stop1} placeholder="8000085" />
+          <input type="text" bind:value={stop1} placeholder="20018235" />
         </label>
         <label class="field grow">
           <span class="lbl">label</span>
