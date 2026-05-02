@@ -28,11 +28,17 @@
     return () => clearInterval(id);
   });
 
+  /// Fetch a bigger window than we render — the walk-time filter and
+  /// occasional cancellations would otherwise empty the visible list.
+  const FETCH_LIMIT = 20;
+  /// Cap on how many reachable departures we show per stop.
+  const SHOW_LIMIT = 10;
+
   /// One retry on 502 — that's our server's "vrr efa unavailable" status,
   /// usually a transient upstream wobble. 4xx (bad stop id) shouldn't
   /// retry. Stale departures stay visible meanwhile via the renderer.
   async function fetchOnce(id: string): Promise<TransitDeparture[]> {
-    return await api.transitDepartures(id, 8);
+    return await api.transitDepartures(id, FETCH_LIMIT);
   }
 
   async function fetchWithRetry(id: string): Promise<TransitDeparture[]> {
@@ -139,21 +145,49 @@
     </div>
   {:else}
     <div class="cols">
-      {#each stops as s (s.id)}
+      {#each stops as s, i (s.id)}
+        {@const walk = dashboardSettings.s.walk_minutes[i] ?? 0}
+        {@const visible = s.deps
+          .filter((d) => {
+            if (d.cancelled) return true;
+            const m = minutesFromNow(d.when ?? d.planned_when);
+            return m === null || m >= walk;
+          })
+          .slice(0, SHOW_LIMIT)}
+        {@const hiddenCount =
+          walk > 0
+            ? s.deps.filter((d) => {
+                if (d.cancelled) return false;
+                const m = minutesFromNow(d.when ?? d.planned_when);
+                return m !== null && m < walk;
+              }).length
+            : 0}
         <div class="stop">
-          <div class="stop-head">{s.label}</div>
+          <div class="stop-head">
+            <span class="stop-name">{s.label}</span>
+            {#if walk > 0}
+              <span class="walk" title="fußweg {walk} min — abfahrten unter dieser zeit sind ausgeblendet">
+                🚶 {walk}m
+              </span>
+            {/if}
+          </div>
           {#if s.error && s.deps.length === 0}
             <div class="danger small">{s.error}</div>
           {:else if s.loading && s.deps.length === 0}
             <div class="muted small">…</div>
+          {:else if visible.length === 0 && s.deps.length > 0}
+            <div class="muted small">
+              keine erreichbaren abfahrten {walk > 0 ? `(fußweg ${walk} min)` : ''}.
+            </div>
           {:else if s.deps.length === 0}
             <div class="muted small">keine abfahrten in 60 min.</div>
           {:else}
             {#if s.error}
               <div class="warn small" title={s.error}>⚠ vrr down — letzter erfolgreicher pull</div>
             {/if}
-            {#each s.deps.slice(0, 6) as d (d.trip_id)}
+            {#each visible as d (d.trip_id)}
               {@const m = minutesFromNow(d.when ?? d.planned_when)}
+              {@const leaveIn = m !== null ? m - walk : null}
               <div class="dep" class:cancel={d.cancelled}>
                 <span class="line" style={`background: ${lineColor(d.line.name, d.line.product)};`}>
                   {d.line.name}
@@ -161,13 +195,17 @@
                 <span class="dest" title={d.direction}>{d.direction}</span>
                 <span
                   class="min"
-                  class:now={m !== null && m <= 1}
+                  class:now={leaveIn !== null && leaveIn <= 1}
                   class:late={d.delay !== null && d.delay >= 60}
+                  title={walk > 0 && m !== null ? `abfahrt in ${m} min, los in ${leaveIn} min` : ''}
                 >
-                  {#if d.cancelled}—{:else if m === null}?{:else if m <= 0}jetzt{:else}{m}{/if}
+                  {#if d.cancelled}—{:else if m === null}?{:else if leaveIn !== null && leaveIn <= 0}los{:else}{leaveIn ?? m}{/if}
                 </span>
               </div>
             {/each}
+            {#if hiddenCount > 0}
+              <div class="muted small foot">{hiddenCount} weiter unter fußweg ausgeblendet</div>
+            {/if}
           {/if}
         </div>
       {/each}
@@ -190,6 +228,7 @@
     border-right: 1px solid var(--border);
     padding-right: 8px;
     margin-right: 8px;
+    overflow-y: auto;
   }
   .stop:last-child {
     border-right: none;
@@ -204,9 +243,29 @@
     padding-bottom: 4px;
     border-bottom: 1px solid var(--border);
     margin-bottom: 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .stop-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .walk {
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--accent);
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+  .foot {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
   }
   .dep {
     display: flex;

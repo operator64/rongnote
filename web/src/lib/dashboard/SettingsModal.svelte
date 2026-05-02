@@ -10,8 +10,10 @@
   let place = $state(dashboardSettings.s.geo?.place ?? '');
   let stop1 = $state(dashboardSettings.s.stop_ids[0] ?? '');
   let stop1Label = $state(dashboardSettings.s.stop_labels[0] ?? '');
+  let stop1Walk = $state(String(dashboardSettings.s.walk_minutes[0] ?? 0));
   let stop2 = $state(dashboardSettings.s.stop_ids[1] ?? '');
   let stop2Label = $state(dashboardSettings.s.stop_labels[1] ?? '');
+  let stop2Walk = $state(String(dashboardSettings.s.walk_minutes[1] ?? 0));
 
   let geoBusy = $state(false);
   let geoErr = $state('');
@@ -85,16 +87,25 @@
         : null;
     const stop_ids: string[] = [];
     const stop_labels: string[] = [];
+    const walk_minutes: number[] = [];
     if (stop1.trim()) {
       stop_ids.push(stop1.trim());
       stop_labels.push(stop1Label.trim() || stop1.trim());
+      walk_minutes.push(clampWalk(stop1Walk));
     }
     if (stop2.trim()) {
       stop_ids.push(stop2.trim());
       stop_labels.push(stop2Label.trim() || stop2.trim());
+      walk_minutes.push(clampWalk(stop2Walk));
     }
-    dashboardSettings.save({ geo, stop_ids, stop_labels });
+    dashboardSettings.save({ geo, stop_ids, stop_labels, walk_minutes });
     onClose();
+  }
+
+  function clampWalk(s: string): number {
+    const n = parseInt(s, 10);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.min(60, n);
   }
 </script>
 
@@ -161,6 +172,10 @@
           <span class="lbl">label</span>
           <input type="text" bind:value={stop1Label} placeholder="Düsseldorf Hbf" />
         </label>
+        <label class="field walk">
+          <span class="lbl" title="minuten zu fuß bis zur haltestelle — abfahrten die du nicht mehr erreichen kannst werden ausgeblendet">fußweg (min)</span>
+          <input type="number" min="0" max="60" bind:value={stop1Walk} placeholder="0" />
+        </label>
       </div>
       <div class="row">
         <label class="field grow">
@@ -170,6 +185,10 @@
         <label class="field grow">
           <span class="lbl">label</span>
           <input type="text" bind:value={stop2Label} />
+        </label>
+        <label class="field walk">
+          <span class="lbl" title="minuten zu fuß bis zur haltestelle">fußweg (min)</span>
+          <input type="number" min="0" max="60" bind:value={stop2Walk} placeholder="0" />
         </label>
       </div>
 
@@ -225,6 +244,8 @@
   .field input[type="number"] { width: 100px; }
   .field.grow { flex: 1; min-width: 120px; }
   .field.grow input { width: 100%; }
+  .field.walk { flex: 0 0 auto; }
+  .field.walk input { width: 64px; }
   .small { font-size: 11px; }
   code {
     background: rgba(127, 127, 127, 0.10);

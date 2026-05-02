@@ -10,10 +10,15 @@ export interface DashboardSettings {
   list_id: string | null;
   /// Weather + transit center. null = ask geolocation on first load.
   geo: { lat: number; lon: number; place: string } | null;
-  /// db-rest stop IDs (HAFAS / IBNR), max 2.
+  /// VRR EFA stop IDs, max 2.
   stop_ids: string[];
   /// Fallback labels for the stop columns when the API lookup fails.
   stop_labels: string[];
+  /// Minutes-to-walk to each stop. Departures arriving sooner than the
+  /// walk time get hidden from the widget — you can't catch them
+  /// anyway, so they'd be misleading. Default 0 (stop is at the door).
+  /// Index aligns with stop_ids/stop_labels.
+  walk_minutes: number[];
 }
 
 function defaults(): DashboardSettings {
@@ -21,7 +26,8 @@ function defaults(): DashboardSettings {
     list_id: null,
     geo: null,
     stop_ids: [],
-    stop_labels: []
+    stop_labels: [],
+    walk_minutes: []
   };
 }
 
