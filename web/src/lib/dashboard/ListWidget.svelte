@@ -206,18 +206,37 @@
     <div class="muted small">vault gelocked. zum entsperren auf den ↗ klicken.</div>
   {:else}
     {#each entries as e, i (e.id)}
-      <button
-        type="button"
+      <div
         class="entry"
         class:done={e.done}
-        onclick={() => toggle(i)}
+        role="button"
+        tabindex="0"
+        onclick={openModal}
+        onkeydown={(ev) => ev.key === 'Enter' && openModal()}
+        title="für vergrößerte ansicht klicken"
       >
-        <span class="box">{e.done ? '✓' : ''}</span>
+        <button
+          type="button"
+          class="box"
+          onclick={(ev) => {
+            ev.stopPropagation();
+            toggle(i);
+          }}
+          aria-label={e.done ? 'als offen markieren' : 'als erledigt markieren'}
+        >{e.done ? '✓' : ''}</button>
         <span class="text">{e.text || '(leer)'}</span>
-      </button>
+      </div>
     {/each}
     {#if entries.length === 0}
-      <div class="muted empty">leere liste — auf ✎ klicken um items hinzuzufügen</div>
+      <div
+        class="muted empty"
+        role="button"
+        tabindex="0"
+        onclick={openModal}
+        onkeydown={(ev) => ev.key === 'Enter' && openModal()}
+      >
+        leere liste — tippen um einträge hinzuzufügen
+      </div>
     {/if}
   {/if}
 </Widget>
@@ -291,13 +310,17 @@
   .entry:hover { background: rgba(127, 127, 127, 0.06); }
   .entry:last-child { border-bottom: none; }
   .entry .box {
-    width: 16px; height: 16px;
+    width: 22px; height: 22px;
     border: 1px solid var(--border);
+    background: var(--bg);
     flex-shrink: 0;
     display: inline-flex; align-items: center; justify-content: center;
     color: var(--accent);
-    font-size: 11px;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0;
   }
+  .entry .box:hover { border-color: var(--fg); }
   .entry.done .box { background: rgba(127,127,127,0.10); }
   .entry .text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .entry.done .text { text-decoration: line-through; color: var(--muted); }
@@ -310,7 +333,7 @@
     font-size: 11px;
     max-width: 140px;
   }
-  .empty { padding: 16px 0; text-align: center; font-size: 12px; }
+  .empty { padding: 16px 0; text-align: center; font-size: 12px; cursor: pointer; }
   .small { font-size: 11px; }
 
   .modal-overlay {

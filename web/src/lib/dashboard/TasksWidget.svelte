@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { api } from '$lib/api';
   import { items } from '$lib/items.svelte';
-  import { spaces } from '$lib/spaces.svelte';
   import TaskCheckbox from '$lib/TaskCheckbox.svelte';
+  import TasksModal from './TasksModal.svelte';
   import Widget from './Widget.svelte';
 
   /// Tasks lane next to the shopping list. Open tasks first (sorted by
@@ -68,42 +66,9 @@
     }
   }
 
-  // --- Inline create modal ---
+  // Tap a task or the + button → open the bigger TasksModal which
+  // handles toggle / rename / delete / add in one place.
   let modalOpen = $state(false);
-  let nTitle = $state('');
-  let nDue = $state('');
-  let saving = $state(false);
-  let saveError = $state('');
-
-  function openCreate() {
-    nTitle = '';
-    nDue = '';
-    saveError = '';
-    modalOpen = true;
-  }
-
-  async function save() {
-    if (!nTitle.trim()) {
-      saveError = 'titel fehlt';
-      return;
-    }
-    saving = true;
-    saveError = '';
-    try {
-      const item = await api.createItem({
-        title: nTitle.trim(),
-        type: 'task',
-        space_id: spaces.active?.id,
-        due_at: nDue || undefined
-      });
-      items.upsert(item);
-      modalOpen = false;
-    } catch (err) {
-      saveError = err instanceof Error ? err.message : 'speichern fehlgeschlagen';
-    } finally {
-      saving = false;
-    }
-  }
 </script>
 
 <Widget
@@ -111,80 +76,57 @@
   meta={openCount + doneCount > 0 ? `${openCount} offen · ${doneCount} done` : ''}
 >
   {#snippet actions()}
-    <button type="button" onclick={openCreate} title="neue task">+</button>
+    <button type="button" onclick={() => (modalOpen = true)} title="neue task">+</button>
   {/snippet}
 
   {#if openTasks.length === 0 && doneTasks.length === 0}
-    <div class="muted empty">keine tasks. + drücken um eine anzulegen.</div>
+    <div
+      class="muted empty"
+      role="button"
+      tabindex="0"
+      onclick={() => (modalOpen = true)}
+      onkeydown={(ev) => ev.key === 'Enter' && (modalOpen = true)}
+    >
+      keine tasks. tippen um eine anzulegen.
+    </div>
   {:else}
     {#each openTasks as t (t.id)}
-      <a class="task" href={`/items/${t.id}`}>
+      <div
+        class="task"
+        role="button"
+        tabindex="0"
+        onclick={() => (modalOpen = true)}
+        onkeydown={(ev) => ev.key === 'Enter' && (modalOpen = true)}
+      >
         <TaskCheckbox done={false} onToggle={(e) => onToggle(e, t.id)} />
         <span class="text" title={t.title}>{t.title || '(ohne titel)'}</span>
         {#if t.due_at}
           <span class={dueClass(t.due_at)}>{dueLabel(t.due_at)}</span>
         {/if}
-      </a>
+      </div>
     {/each}
     {#if doneTasks.length > 0}
       {#if openTasks.length > 0}
         <div class="divider muted">erledigt</div>
       {/if}
       {#each doneTasks as t (t.id)}
-        <a class="task done" href={`/items/${t.id}`}>
+        <div
+          class="task done"
+          role="button"
+          tabindex="0"
+          onclick={() => (modalOpen = true)}
+          onkeydown={(ev) => ev.key === 'Enter' && (modalOpen = true)}
+        >
           <TaskCheckbox done={true} onToggle={(e) => onToggle(e, t.id)} />
           <span class="text" title={t.title}>{t.title || '(ohne titel)'}</span>
-        </a>
+        </div>
       {/each}
     {/if}
   {/if}
 </Widget>
 
 {#if modalOpen}
-  <div
-    class="modal-overlay"
-    role="presentation"
-    onclick={() => (modalOpen = false)}
-    onkeydown={(e) => e.key === 'Escape' && (modalOpen = false)}
-  >
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <div class="head">
-        <strong>neue task</strong>
-        <span class="grow"></span>
-        <button type="button" onclick={() => (modalOpen = false)}>schließen</button>
-      </div>
-      <div class="body">
-        <label class="field">
-          <span class="lbl">titel</span>
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            type="text"
-            bind:value={nTitle}
-            placeholder="müll raus, geschirrspüler ausräumen, ..."
-            autofocus
-          />
-        </label>
-        <label class="field">
-          <span class="lbl">fällig (optional)</span>
-          <input type="date" bind:value={nDue} />
-        </label>
-        {#if saveError}<div class="danger small">{saveError}</div>{/if}
-      </div>
-      <div class="foot">
-        <button type="button" onclick={() => (modalOpen = false)}>cancel</button>
-        <button type="button" class="primary" onclick={save} disabled={saving}>
-          {saving ? 'speichern…' : 'save'}
-        </button>
-      </div>
-    </div>
-  </div>
+  <TasksModal onClose={() => (modalOpen = false)} />
 {/if}
 
 <style>
@@ -197,6 +139,7 @@
     color: var(--fg);
     text-decoration: none;
     min-width: 0;
+    cursor: pointer;
   }
   .task:hover { text-decoration: none; background: rgba(127, 127, 127, 0.06); }
   .task:last-child { border-bottom: none; }
@@ -233,51 +176,6 @@
     text-align: center;
     font-size: 12px;
     color: var(--muted);
-  }
-
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    z-index: 100;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding-top: 10vh;
-  }
-  .modal {
-    width: min(420px, 92vw);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    display: flex; flex-direction: column;
-  }
-  .head, .foot {
-    display: flex; align-items: center; gap: 6px;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
-  }
-  .foot { border-bottom: none; border-top: 1px solid var(--border); justify-content: flex-end; }
-  .grow { flex: 1; }
-  .body { padding: 12px 14px; }
-  .field { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
-  .field .lbl { color: var(--muted); font-size: 11px; }
-  .field input {
-    background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border);
-    padding: 4px 8px;
-    font: inherit;
-  }
-  .small { font-size: 11px; }
-  .primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: white;
-  }
-  .head button, .foot button, .modal button {
-    background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border);
-    padding: 4px 10px;
     cursor: pointer;
-    font: inherit;
   }
 </style>

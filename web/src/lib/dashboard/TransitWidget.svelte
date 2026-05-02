@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError, type TransitDeparture } from '$lib/api';
   import { dashboardSettings } from '$lib/dashboardSettings.svelte';
+  import TransitStopModal from './TransitStopModal.svelte';
   import Widget from './Widget.svelte';
 
   /// Public transport departures via our /api/v1/transit proxy, which
@@ -135,6 +136,9 @@
     const id = setInterval(() => (now = new Date()), 30_000);
     return () => clearInterval(id);
   });
+
+  // Tap on a stop column → modal with bigger font + more departures.
+  let modalIdx = $state<number | null>(null);
 </script>
 
 <Widget
@@ -169,7 +173,14 @@
                 return m !== null && m < walk;
               }).length
             : 0}
-        <div class="stop">
+        <div
+          class="stop"
+          role="button"
+          tabindex="0"
+          onclick={() => (modalIdx = i)}
+          onkeydown={(ev) => ev.key === 'Enter' && (modalIdx = i)}
+          title="für vergrößerte ansicht klicken"
+        >
           <div class="stop-head">
             <span class="stop-name">{s.label}</span>
             {#if walk > 0}
@@ -224,6 +235,16 @@
   {/if}
 </Widget>
 
+{#if modalIdx !== null && stops[modalIdx]}
+  {@const s = stops[modalIdx]}
+  <TransitStopModal
+    stopId={s.id}
+    label={s.label}
+    walkMinutes={dashboardSettings.s.walk_minutes[modalIdx] ?? 0}
+    onClose={() => (modalIdx = null)}
+  />
+{/if}
+
 <style>
   .cols {
     display: flex;
@@ -240,7 +261,9 @@
     padding-right: 8px;
     margin-right: 8px;
     overflow-y: auto;
+    cursor: pointer;
   }
+  .stop:hover { background: rgba(127, 127, 127, 0.04); }
   .stop:last-child {
     border-right: none;
     margin-right: 0;
