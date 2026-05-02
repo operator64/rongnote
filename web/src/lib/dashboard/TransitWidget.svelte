@@ -102,6 +102,13 @@
     return Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
   }
 
+  function clockTime(iso: string | null): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
   /// Server gives us a clean `product` bucket; fall back to name prefix
   /// (covers both "S 1" db-style and "S1" vrr-style) for older payloads.
   function lineColor(name: string, product?: string): string {
@@ -188,6 +195,7 @@
             {#each visible as d (d.trip_id)}
               {@const m = minutesFromNow(d.when ?? d.planned_when)}
               {@const leaveIn = m !== null ? m - walk : null}
+              {@const t = clockTime(d.when ?? d.planned_when)}
               <div class="dep" class:cancel={d.cancelled}>
                 <span class="line" style={`background: ${lineColor(d.line.name, d.line.product)};`}>
                   {d.line.name}
@@ -197,9 +205,12 @@
                   class="min"
                   class:now={leaveIn !== null && leaveIn <= 1}
                   class:late={d.delay !== null && d.delay >= 60}
-                  title={walk > 0 && m !== null ? `abfahrt in ${m} min, los in ${leaveIn} min` : ''}
+                  title={walk > 0 && m !== null ? `abfahrt um ${t}, in ${m} min — los in ${leaveIn} min` : (m !== null ? `abfahrt um ${t}, in ${m} min` : '')}
                 >
-                  {#if d.cancelled}—{:else if m === null}?{:else if leaveIn !== null && leaveIn <= 0}los{:else}{leaveIn ?? m}{/if}
+                  <span class="time">{t}</span>
+                  <span class="cd">
+                    {#if d.cancelled}—{:else if m === null}?{:else if leaveIn !== null && leaveIn <= 0}los{:else}{leaveIn ?? m}m{/if}
+                  </span>
                 </span>
               </div>
             {/each}
@@ -305,11 +316,23 @@
     font-variant-numeric: tabular-nums;
     flex-shrink: 0;
     font-size: 12px;
-    min-width: 36px;
+    min-width: 78px;
+    text-align: right;
+    display: inline-flex;
+    justify-content: flex-end;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .min .time {
+    font-size: 12px;
+  }
+  .min .cd {
+    font-size: 11px;
+    min-width: 28px;
     text-align: right;
   }
-  .min.now { color: var(--accent); font-weight: 600; }
-  .min.late { color: var(--warn, #d18616); }
+  .min.now .cd { color: var(--accent); font-weight: 600; }
+  .min.late .cd { color: var(--warn, #d18616); }
   .small { font-size: 12px; }
   .warn {
     color: var(--warn, #d18616);
