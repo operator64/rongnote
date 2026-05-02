@@ -35,6 +35,38 @@
     return () => clearInterval(id);
   });
 
+  /// Fetch one stop's departures with one retry on 5xx (db-rest's upstream
+  /// HAFAS proxy throws transient 500s several times an hour). Linkbox
+  /// shows the previous cached departures meanwhile.
+  async function fetchOnce(id: string): Promise<Departure[]> {
+    const url =
+      `https://v6.db.transport.rest/stops/${encodeURIComponent(id)}/departures` +
+      `?duration=60&results=8`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      const tag = res.status >= 500 ? 'db down' : `db-rest ${res.status}`;
+      throw new Error(body ? `${tag}: ${body.slice(0, 80)}` : tag);
+    }
+    const json = (await res.json()) as { departures: Departure[] };
+    return json.departures ?? [];
+  }
+
+  async function fetchWithRetry(id: string): Promise<Departure[]> {
+    try {
+      return await fetchOnce(id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      // Only retry transient upstream errors. 4xx is a config problem
+      // (bad stop id) — retrying won't help.
+      if (msg.startsWith('db down') || msg.includes('NetworkError')) {
+        await new Promise((r) => setTimeout(r, 1500));
+        return await fetchOnce(id);
+      }
+      throw err;
+    }
+  }
+
   async function refresh() {
     const ids = dashboardSettings.s.stop_ids.slice(0, 2);
     const labels = dashboardSettings.s.stop_labels;
@@ -42,27 +74,32 @@
       stops = [];
       return;
     }
-    const next: StopState[] = ids.map((id, i) => ({
-      id,
-      label: labels[i] ?? id,
-      deps: [],
-      error: '',
-      loading: true
-    }));
-    stops = next;
+    // Initialise rows on first run only — subsequent refreshes keep the
+    // previous deps visible until the new fetch resolves, so a transient
+    // 5xx doesn't blank the widget.
+    if (stops.length !== ids.length || stops.some((s, i) => s.id !== ids[i])) {
+      stops = ids.map((id, i) => ({
+        id,
+        label: labels[i] ?? id,
+        deps: [],
+        error: '',
+        loading: true
+      }));
+    } else {
+      for (let i = 0; i < stops.length; i++) {
+        stops[i].label = labels[i] ?? stops[i].id;
+        stops[i].loading = true;
+      }
+    }
     await Promise.all(
-      ids.map(async (id, i) => {
+      ids.map(async (_id, i) => {
         try {
-          const url =
-            `https://v6.db.transport.rest/stops/${encodeURIComponent(id)}/departures` +
-            `?duration=60&results=8`;
-          const res = await fetch(url);
-          if (!res.ok) throw new Error(`db-rest ${res.status}`);
-          const json = (await res.json()) as { departures: Departure[] };
-          stops[i].deps = json.departures ?? [];
-          stops[i].loading = false;
+          stops[i].deps = await fetchWithRetry(stops[i].id);
+          stops[i].error = '';
         } catch (err) {
           stops[i].error = err instanceof Error ? err.message : 'fetch failed';
+          // keep stops[i].deps so the previous values stay visible
+        } finally {
           stops[i].loading = false;
         }
       })
@@ -113,13 +150,16 @@
       {#each stops as s (s.id)}
         <div class="stop">
           <div class="stop-head">{s.label}</div>
-          {#if s.error}
+          {#if s.error && s.deps.length === 0}
             <div class="danger small">{s.error}</div>
           {:else if s.loading && s.deps.length === 0}
             <div class="muted small">…</div>
           {:else if s.deps.length === 0}
             <div class="muted small">keine abfahrten in 60 min.</div>
           {:else}
+            {#if s.error}
+              <div class="warn small" title={s.error}>⚠ db down — letzter erfolgreicher pull</div>
+            {/if}
             {#each s.deps.slice(0, 6) as d (d.tripId)}
               {@const m = minutesFromNow(d.when ?? d.plannedWhen)}
               <div class="dep" class:cancel={d.cancelled}>
@@ -220,4 +260,11 @@
   .min.now { color: var(--accent); font-weight: 600; }
   .min.late { color: var(--warn, #d18616); }
   .small { font-size: 12px; }
+  .warn {
+    color: var(--warn, #d18616);
+    padding: 2px 4px;
+    border: 1px dashed var(--warn, #d18616);
+    margin-bottom: 4px;
+    font-size: 10px;
+  }
 </style>
