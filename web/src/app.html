@@ -2,9 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- PWA: tablets pinned to /dashboard install via "Add to Home Screen"
+         and launch fullscreen (no address bar). The manifest covers
+         Chrome/Edge install + Android home-screen icons; the apple-*
+         meta + apple-touch-icon cover iOS Safari, which ignores the
+         manifest's display:standalone and uses these instead. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#1f6feb" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- "default" keeps the iOS status bar as a normal opaque strip above
+         the app — the dashboard's own header doesn't get pushed under
+         the time/wifi/battery overlay (which is what black-translucent
+         would do). -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="rongnote" />
+
     <title>rongnote</title>
     <script>
       // Apply persisted prefs before paint to avoid FOUC. Mirrors the logic
