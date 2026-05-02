@@ -50,7 +50,20 @@ export default defineConfig({
     }
   },
   build: {
-    target: 'es2022'
+    target: 'es2022',
+    rollupOptions: {
+      output: {
+        // Keep small modules merged into bigger chunks. Mitigates a
+        // Vite/Rollup chunking bug where SvelteKit's `+layout.ts`
+        // export (`universal`) ends up in a circular import between
+        // chunks — desktop V8 tolerates the cycle, but iOS Safari /
+        // JSC enforces TDZ and throws "Cannot access 'universal'
+        // before initialization" on every reload.
+        // 50 KB is enough to fold the small framework chunks into
+        // their consumers without making the initial bundle huge.
+        experimentalMinChunkSize: 50_000
+      }
+    }
   },
   server: {
     port: 5173,
