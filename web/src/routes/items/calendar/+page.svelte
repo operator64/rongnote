@@ -1,26 +1,59 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, ApiError, type ItemSummary } from '$lib/api';
   import { items } from '$lib/items.svelte';
   import { spaces } from '$lib/spaces.svelte';
 
-  /// Month-grid calendar. Loads events for the visible 6-week window
-  /// from /api/v1/items?type=event&start_after=&start_before= (UTC).
-  /// Active space is taken from spaces.activeId. Click a day to select
-  /// it and see its events in the right pane; click an event to open
-  /// the editor; click "+ event" to create a new placeholder.
+  /// Month-grid calendar showing events from EVERY space the user is a
+  /// member of (personal + each team), color-coded per space. Loads the
+  /// visible 6-week window from /api/v1/items?type=event&start_after=&
+  /// start_before= for each space in parallel. Re-fetches when the view
+  /// window changes, the available spaces change, or any item in the
+  /// vault is mutated (so editing an event in the editor and clicking
+  /// "back to calendar" shows the change immediately).
+
+  type EventWithSpace = ItemSummary & { space_id: string };
+
+  /// Palette: personal stays accent-blue; team spaces cycle through a
+  /// distinct set so events from different teams don't blend together.
+  const TEAM_COLORS = [
+    '#1a7f37', // green
+    '#d18616', // amber
+    '#6f42c1', // purple
+    '#bf3989', // pink
+    '#9e6a03'  // bronze
+  ];
+  function colorFor(spaceId: string): string {
+    const sp = spaces.list.find((s) => s.id === spaceId);
+    if (!sp || sp.kind === 'personal') return 'var(--accent)';
+    // Order team spaces deterministically by created_at so each one keeps
+    // its color across reloads.
+    const teams = spaces.list
+      .filter((s) => s.kind === 'team')
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const idx = teams.findIndex((s) => s.id === spaceId);
+    return TEAM_COLORS[idx % TEAM_COLORS.length];
+  }
+  function spaceLabel(spaceId: string): string {
+    return spaces.list.find((s) => s.id === spaceId)?.name ?? '?';
+  }
 
   let viewMonth = $state(monthAnchor(new Date()));
   let selected = $state<Date>(stripTime(new Date()));
-  let events = $state<ItemSummary[]>([]);
+  let events = $state<EventWithSpace[]>([]);
   let loading = $state(true);
   let error = $state('');
 
-  /// Re-fetch whenever the view-window or active space changes.
+  /// Re-fetch on:
+  /// - view-window change (← / → / heute)
+  /// - spaces.list change (user joined / left / created a team space)
+  /// - items.list mutation (any create/update/delete elsewhere — editor,
+  ///   sidebar +, palette, …) — keeps the grid live without a manual
+  ///   refresh button
   $effect(() => {
     void viewMonth;
-    void spaces.activeId;
+    void spaces.list;
+    void items.list;
     refresh();
   });
 
@@ -29,12 +62,20 @@
     error = '';
     try {
       const range = monthGridRange(viewMonth);
-      events = await api.listItems({
-        type: 'event',
-        space_id: spaces.activeId ?? undefined,
-        start_after: range.from.toISOString(),
-        start_before: range.to.toISOString()
-      });
+      const start_after = range.from.toISOString();
+      const start_before = range.to.toISOString();
+      const perSpace = await Promise.all(
+        spaces.list.map(async (s) => {
+          const list = await api.listItems({
+            type: 'event',
+            space_id: s.id,
+            start_after,
+            start_before
+          });
+          return list.map((it): EventWithSpace => ({ ...it, space_id: s.id }));
+        })
+      );
+      events = perSpace.flat();
     } catch (err) {
       error =
         err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'load failed';
@@ -72,10 +113,10 @@
 
   let grid = $derived(monthGridRange(viewMonth));
 
-  /// Map: 'YYYY-MM-DD' → ItemSummary[]. An event spans days; for the
-  /// month view we attach it to the day(s) it covers within the window.
+  /// Map: 'YYYY-MM-DD' → events[]. An event spans days; for the month
+  /// view we attach it to the day(s) it covers within the window.
   let byDay = $derived.by(() => {
-    const map = new Map<string, ItemSummary[]>();
+    const map = new Map<string, EventWithSpace[]>();
     for (const ev of events) {
       if (!ev.start_at) continue;
       const start = new Date(ev.start_at);
@@ -161,8 +202,7 @@
         space_id: spaces.activeId ?? undefined,
         path: '/'
       });
-      items.upsert(created);
-      await refresh();
+      items.upsert(created); // triggers the $effect → refresh()
       goto(`/items/${created.id}`);
     } catch (err) {
       error = err instanceof Error ? err.message : 'create failed';
@@ -170,10 +210,6 @@
       busy = false;
     }
   }
-
-  onMount(() => {
-    // Initial fetch is also driven by the $effect above.
-  });
 
   function selectDay(d: Date) {
     selected = stripTime(d);
@@ -194,6 +230,14 @@
     {#if loading}<span class="muted small">…</span>{/if}
     {#if error}<span class="danger small">{error}</span>{/if}
     <span class="grow"></span>
+    <span class="legend">
+      {#each spaces.list as s (s.id)}
+        <span class="legend-item" title={s.kind === 'team' ? `team · ${s.role}` : 'personal'}>
+          <span class="swatch" style="background: {colorFor(s.id)};"></span>
+          <span>{s.name}</span>
+        </span>
+      {/each}
+    </span>
     <span class="muted small">{events.length} events</span>
     <button type="button" disabled={busy} onclick={newEventOnSelected}>+ event</button>
   </div>
@@ -219,7 +263,11 @@
             >
               <span class="num">{day.getDate()}</span>
               {#each dayEvents.slice(0, 3) as ev (ev.id)}
-                <span class="pill">
+                <span
+                  class="pill"
+                  style="background: {colorFor(ev.space_id)};"
+                  title={`${ev.title} · ${spaceLabel(ev.space_id)}`}
+                >
                   {#if !ev.all_day}<span class="t">{timeLabel(ev)}</span>{/if}
                   <span class="ttl">{ev.title}</span>
                 </span>
@@ -242,8 +290,12 @@
       </div>
       <div class="day-list">
         {#each selectedEvents as ev (ev.id)}
-          <a class="day-event" href={`/items/${ev.id}`}>
-            <span class="when muted">{fullTimeLabel(ev)}</span>
+          <a
+            class="day-event"
+            href={`/items/${ev.id}`}
+            style="border-left-color: {colorFor(ev.space_id)};"
+          >
+            <span class="when muted">{fullTimeLabel(ev)} · <span class="space-tag">{spaceLabel(ev.space_id)}</span></span>
             <span class="title">{ev.title}</span>
           </a>
         {/each}
@@ -281,6 +333,18 @@
     padding: 0;
   }
   .head .small { font-size: 11px; }
+  .legend {
+    display: inline-flex; gap: 10px; align-items: center;
+    font-size: 11px; color: var(--muted);
+    margin-right: 12px;
+    flex-wrap: wrap;
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 4px; }
+  .swatch {
+    display: inline-block;
+    width: 8px; height: 8px;
+  }
+  .space-tag { color: var(--muted); }
   .layout {
     flex: 1; min-height: 0;
     display: grid;
@@ -370,13 +434,13 @@
   .day-event {
     display: block;
     border-left: 3px solid var(--accent);
-    background: rgba(31, 111, 235, 0.10);
+    background: rgba(127, 127, 127, 0.06);
     padding: 4px 8px;
     margin-bottom: 6px;
     color: var(--fg);
     text-decoration: none;
   }
-  .day-event:hover { text-decoration: none; background: rgba(31, 111, 235, 0.16); }
+  .day-event:hover { text-decoration: none; background: rgba(127, 127, 127, 0.12); }
   .day-event .when { display: block; font-size: 11px; }
   .day-event .title { font-weight: 500; }
   .empty {
