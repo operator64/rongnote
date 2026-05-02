@@ -137,6 +137,14 @@
     },
     {
       kind: 'action',
+      label: 'open dashboard',
+      hint: 'view',
+      run: async () => {
+        await goto('/items/dashboard');
+      }
+    },
+    {
+      kind: 'action',
       label: 'upload file',
       hint: 'create',
       run: async () => {

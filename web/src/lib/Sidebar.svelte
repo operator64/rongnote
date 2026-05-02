@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Home, Users } from '@lucide/svelte';
+  import { Home, LayoutDashboard, Users } from '@lucide/svelte';
   import { type ItemType } from '$lib/api';
   import ItemIcon from '$lib/ItemIcon.svelte';
   import { items } from '$lib/items.svelte';
@@ -79,6 +79,10 @@
     <a class="row-btn" href="/items/calendar">
       <ItemIcon type="event" />
       <span class="grow">calendar</span>
+    </a>
+    <a class="row-btn" href="/items/dashboard">
+      <LayoutDashboard size={14} />
+      <span class="grow">dashboard</span>
     </a>
   {/if}
 

@@ -23,6 +23,10 @@ class Vault {
 
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private idleHandler: (() => void) | null = null;
+  /// Caller-controlled. Routes that want to stay live (dashboard) call
+  /// pauseIdle on mount, resumeIdle on destroy. Stacks if multiple
+  /// callers — vault stays paused until ALL of them resume.
+  private pauseDepth = 0;
 
   get isUnlocked(): boolean {
     return this.masterKey !== null;
@@ -155,7 +159,22 @@ class Vault {
   private armTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (!this.isUnlocked) return;
+    if (this.pauseDepth > 0) return;
     this.idleTimer = setTimeout(() => this.lock(), IDLE_LOCK_MS);
+  }
+
+  /// Suspend the auto-lock for the duration of an always-live route
+  /// (e.g. the dashboard). Stacks — must be matched by resumeIdle.
+  pauseIdle(): void {
+    this.pauseDepth++;
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+  resumeIdle(): void {
+    if (this.pauseDepth > 0) this.pauseDepth--;
+    if (this.pauseDepth === 0) this.armTimer();
   }
 }
 
