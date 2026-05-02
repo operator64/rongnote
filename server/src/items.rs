@@ -678,7 +678,20 @@ async fn update(
                     "team-space items use the existing item_member_keys; do not send wrapped_item_key on update".into(),
                 ));
             }
-            if body.member_keys.is_some() {
+            // First save on a team-space item that was created empty (no
+            // body yet, no item_member_keys rows) — the client has to
+            // supply the per-member sealed wrap now, same as it would on
+            // a create-with-body. Subsequent saves reuse the existing
+            // item_key + rows so version snapshots stay decryptable;
+            // member_keys are forbidden then.
+            let is_first_body = existing.encrypted_body_bytes().is_none();
+            if is_first_body {
+                if body.member_keys.as_ref().map_or(true, |v| v.is_empty()) {
+                    return Err(AppError::BadRequest(
+                        "first body update on a team-space item requires member_keys".into(),
+                    ));
+                }
+            } else if body.member_keys.is_some() {
                 return Err(AppError::BadRequest(
                     "team-space body update reuses existing member keys; do not send member_keys".into(),
                 ));
@@ -753,6 +766,29 @@ async fn update(
 
     // Team-space body updates: nothing to do here — the existing rows in
     // item_member_keys still wrap the unchanged item_key.
+    //
+    // Exception: if this is the first body save on a team-space item
+    // (created empty, no item_member_keys rows yet), we need to insert
+    // the freshly-supplied per-member wraps. Validation upstream already
+    // confirmed they're present + cover every current member.
+    if body.update_body && is_team && existing.encrypted_body_bytes().is_none() {
+        if let Some(keys) = body.member_keys.as_deref() {
+            validate_member_keys(&mut tx, existing.space_id(), keys).await?;
+            for k in keys {
+                sqlx::query(
+                    r#"
+                    INSERT INTO item_member_keys (item_id, user_id, sealed_item_key)
+                    VALUES ($1, $2, $3)
+                    "#,
+                )
+                .bind(id)
+                .bind(k.user_id)
+                .bind(&k.sealed_item_key)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
 
     tx.commit().await?;
 
