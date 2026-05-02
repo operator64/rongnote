@@ -34,14 +34,36 @@ class SpaceStore {
     this.loading = true;
     try {
       this.list = await api.listSpaces();
-      // Pick the personal space as default if no active set yet.
       if (!this.activeId || !this.list.some((s) => s.id === this.activeId)) {
-        const p = this.personal();
-        this.activeId = p?.id ?? null;
+        this.activeId = this.defaultActive()?.id ?? null;
       }
     } finally {
       this.loading = false;
     }
+  }
+
+  /// Default active-space picker, used at first login + after a space
+  /// the user was on disappears.
+  ///
+  /// Kiosk-only users default to their first team membership — their
+  /// personal space exists for crypto reasons (keypair lives there)
+  /// but is always empty, so landing the dashboard on it would show
+  /// nothing. For everyone else, personal is the right home base.
+  private defaultActive(): Space | null {
+    if (this.isKioskOnlyCalc()) {
+      return this.list.find((s) => s.kind === 'team') ?? this.personal();
+    }
+    return this.personal();
+  }
+
+  /// Computed eagerly so refresh() can use it without waiting for the
+  /// `isKioskOnly` $derived to settle. Same logic, plain function form.
+  private isKioskOnlyCalc(): boolean {
+    return (
+      this.list.length > 0 &&
+      this.list.some((s) => s.kind === 'team' && s.role === 'kiosk') &&
+      this.list.every((s) => s.kind === 'personal' || s.role === 'kiosk')
+    );
   }
 
   setActive(id: string): void {
@@ -62,7 +84,7 @@ class SpaceStore {
   remove(id: string): void {
     this.list = this.list.filter((s) => s.id !== id);
     if (this.activeId === id) {
-      this.activeId = this.personal()?.id ?? null;
+      this.activeId = this.defaultActive()?.id ?? null;
     }
   }
 }
