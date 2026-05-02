@@ -92,6 +92,10 @@
     const item = await api.createItem({
       title: titleByType[type] ?? 'Untitled',
       type,
+      // Honour the sidebar's active space — without this the server
+      // resolves to the user's default (personal) space and team-space
+      // intent gets silently lost.
+      space_id: spaces.activeId ?? undefined,
       ...extra
     });
     items.upsert(item);

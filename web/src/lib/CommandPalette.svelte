@@ -44,13 +44,25 @@
   };
   type Item = CommandAction | ItemHit;
 
+  /// All "new X" creation paths route through this so they consistently
+  /// land in whichever space is currently selected in the sidebar — the
+  /// server defaults to the user's personal space if space_id is omitted,
+  /// which silently violates user intent when a team is active.
+  function activeSpaceId(): string | undefined {
+    return spaces.activeId ?? undefined;
+  }
+
   const ACTIONS: CommandAction[] = [
     {
       kind: 'action',
       label: 'new note',
       hint: 'create',
       run: async () => {
-        const item = await api.createItem({ title: 'Untitled', type: 'note' });
+        const item = await api.createItem({
+          title: 'Untitled',
+          type: 'note',
+          space_id: activeSpaceId()
+        });
         items.upsert(item);
         await goto(`/items/${item.id}`);
       }
@@ -60,7 +72,11 @@
       label: 'new task',
       hint: 'create',
       run: async () => {
-        const item = await api.createItem({ title: 'New task', type: 'task' });
+        const item = await api.createItem({
+          title: 'New task',
+          type: 'task',
+          space_id: activeSpaceId()
+        });
         items.upsert(item);
         await goto(`/items/${item.id}`);
       }
@@ -70,7 +86,11 @@
       label: 'new list',
       hint: 'create',
       run: async () => {
-        const item = await api.createItem({ title: 'New list', type: 'list' });
+        const item = await api.createItem({
+          title: 'New list',
+          type: 'list',
+          space_id: activeSpaceId()
+        });
         items.upsert(item);
         await goto(`/items/${item.id}`);
       }
@@ -80,7 +100,11 @@
       label: 'new secret',
       hint: 'create',
       run: async () => {
-        const item = await api.createItem({ title: 'New secret', type: 'secret' });
+        const item = await api.createItem({
+          title: 'New secret',
+          type: 'secret',
+          space_id: activeSpaceId()
+        });
         items.upsert(item);
         await goto(`/items/${item.id}`);
       }
@@ -90,7 +114,11 @@
       label: 'new snippet',
       hint: 'create',
       run: async () => {
-        const item = await api.createItem({ title: 'New snippet', type: 'snippet' });
+        const item = await api.createItem({
+          title: 'New snippet',
+          type: 'snippet',
+          space_id: activeSpaceId()
+        });
         items.upsert(item);
         await goto(`/items/${item.id}`);
       }
@@ -100,7 +128,11 @@
       label: 'new bookmark',
       hint: 'create',
       run: async () => {
-        const item = await api.createItem({ title: 'New bookmark', type: 'bookmark' });
+        const item = await api.createItem({
+          title: 'New bookmark',
+          type: 'bookmark',
+          space_id: activeSpaceId()
+        });
         items.upsert(item);
         await goto(`/items/${item.id}`);
       }
@@ -121,7 +153,8 @@
           type: 'event',
           start_at: start.toISOString(),
           end_at: end.toISOString(),
-          all_day: false
+          all_day: false,
+          space_id: activeSpaceId()
         });
         items.upsert(item);
         await goto(`/items/${item.id}`);
@@ -529,7 +562,8 @@
       type: 'note',
       title,
       path: `/journal/${ym}`,
-      tags: ['daily', 'journal']
+      tags: ['daily', 'journal'],
+      space_id: activeSpaceId()
     });
     items.upsert(item);
     await goto(`/items/${item.id}`);
