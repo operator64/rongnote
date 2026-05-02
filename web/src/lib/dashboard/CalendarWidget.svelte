@@ -5,47 +5,85 @@
   import { spaces } from '$lib/spaces.svelte';
   import Widget from './Widget.svelte';
 
-  /// Today + tomorrow events, derived from items.list (which already
-  /// contains the union when the calendar route or any space switcher
-  /// has hydrated it). Updates live as items.list mutates.
+  /// Week-strip + agenda layout (matches the dashboard-grid prototype).
+  /// Top row = ISO week (Mo–So) with today highlighted, dot under any
+  /// day that has events. Body = chronological list of events for the
+  /// currently-selected day. Tap a day to switch.
   ///
-  /// Has an inline + button that opens a small modal: this is the only
-  /// way a kiosk-only user (no /items chrome, no Cmd-K) can post a new
-  /// event without leaving the dashboard.
+  /// The "+event" modal is unchanged from the previous version — kiosk
+  /// users still need a way to post events without ever seeing /items.
 
-  function startOfToday(): Date {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
+  // --- Date helpers -----------------------------------------------------
+  function startOfDay(d: Date): Date {
+    const r = new Date(d);
+    r.setHours(0, 0, 0, 0);
+    return r;
   }
-  function startOfTomorrow(): Date {
-    const d = startOfToday();
-    d.setDate(d.getDate() + 1);
-    return d;
+  function ymd(d: Date): string {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
-  function startOfDayAfterTomorrow(): Date {
-    const d = startOfToday();
-    d.setDate(d.getDate() + 2);
-    return d;
+  /// ISO 8601 week number (Mon-start, week with Jan 4th in it).
+  function isoWeek(date: Date): number {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil(((d.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  }
+  function mondayOf(d: Date): Date {
+    const r = startOfDay(d);
+    const dow = (r.getDay() + 6) % 7; // 0 = Mon
+    r.setDate(r.getDate() - dow);
+    return r;
   }
 
-  let todayMs = $derived(startOfToday().getTime());
-  let tomorrowMs = $derived(startOfTomorrow().getTime());
-  let dayAfterMs = $derived(startOfDayAfterTomorrow().getTime());
+  // --- Live "now" tick (for today highlight + isLive) -------------------
+  let now = $state(new Date());
+  $effect(() => {
+    const id = setInterval(() => (now = new Date()), 60_000);
+    return () => clearInterval(id);
+  });
+  let todayYmd = $derived(ymd(now));
 
-  let buckets = $derived.by(() => {
-    const today: typeof items.list = [];
-    const tomorrow: typeof items.list = [];
+  // --- Selection + week ------------------------------------------------
+  let selected = $state<Date>(startOfDay(new Date()));
+  let weekStart = $derived(mondayOf(selected));
+  let weekDays = $derived.by<Date[]>(() => {
+    const out: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(d.getDate() + i);
+      out.push(d);
+    }
+    return out;
+  });
+
+  // Map ymd → events for that day, sorted by start_at.
+  let eventsByDay = $derived.by<Map<string, typeof items.list>>(() => {
+    const map = new Map<string, typeof items.list>();
     for (const it of items.list) {
       if (it.type !== 'event' || !it.start_at) continue;
-      const t = new Date(it.start_at).getTime();
-      if (t >= todayMs && t < tomorrowMs) today.push(it);
-      else if (t >= tomorrowMs && t < dayAfterMs) tomorrow.push(it);
+      const key = ymd(new Date(it.start_at));
+      const arr = map.get(key) ?? [];
+      arr.push(it);
+      map.set(key, arr);
     }
-    today.sort((a, b) => (a.start_at ?? '').localeCompare(b.start_at ?? ''));
-    tomorrow.sort((a, b) => (a.start_at ?? '').localeCompare(b.start_at ?? ''));
-    return { today, tomorrow };
+    for (const arr of map.values()) {
+      arr.sort((a, b) => (a.start_at ?? '').localeCompare(b.start_at ?? ''));
+    }
+    return map;
   });
+
+  let selectedYmd = $derived(ymd(selected));
+  let selectedEvents = $derived(eventsByDay.get(selectedYmd) ?? []);
+
+  function isToday(d: Date): boolean {
+    return ymd(d) === todayYmd;
+  }
+  function isSelected(d: Date): boolean {
+    return ymd(d) === selectedYmd;
+  }
 
   function timeOf(it: { start_at?: string | null; all_day?: boolean }): string {
     if (it.all_day) return 'ganztägig';
@@ -55,12 +93,6 @@
       minute: '2-digit'
     });
   }
-
-  let now = $state(new Date());
-  $effect(() => {
-    const id = setInterval(() => (now = new Date()), 60_000);
-    return () => clearInterval(id);
-  });
   function isLive(it: { start_at?: string | null; end_at?: string | null }): boolean {
     if (!it.start_at) return false;
     const s = new Date(it.start_at).getTime();
@@ -68,7 +100,18 @@
     return s <= now.getTime() && now.getTime() < e;
   }
 
-  // --- Inline event-create modal ---
+  // Meta line: "KW 18 · Sa, 2. Mai" — the KW number tracks the *selected*
+  // day so the user can navigate weeks visually if we add prev/next later.
+  let meta = $derived.by(() => {
+    const dayLabel = selected.toLocaleDateString(undefined, {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short'
+    });
+    return `KW ${isoWeek(selected)} · ${dayLabel}`;
+  });
+
+  // --- "+ event" modal ---------------------------------------------------
   let modalOpen = $state(false);
   let nTitle = $state('');
   let nDate = $state('');
@@ -78,18 +121,10 @@
   let saving = $state(false);
   let saveError = $state('');
 
-  function todayYmd(): string {
-    const d = new Date();
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  }
-
   function openCreate() {
     nTitle = '';
-    nDate = todayYmd();
+    nDate = selectedYmd; // default to whichever day the user is looking at
     nAllDay = false;
-    // round to next half-hour
-    const now = new Date();
     const m = now.getMinutes() < 30 ? 30 : 0;
     const h = now.getMinutes() < 30 ? now.getHours() : (now.getHours() + 1) % 24;
     nStart = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -113,8 +148,6 @@
       let start_at: string;
       let end_at: string;
       if (nAllDay) {
-        // Store as midnight UTC of the start day, end as next-midnight
-        // (iCal DTEND exclusive convention — same as EventEditor).
         const d = new Date(`${nDate}T00:00:00Z`);
         start_at = d.toISOString();
         const next = new Date(d);
@@ -147,35 +180,45 @@
       saving = false;
     }
   }
+
+  const WEEKDAY_LABELS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 </script>
 
-<Widget title="kalender" meta="heute · morgen">
+<Widget title="kalender" {meta}>
   {#snippet actions()}
     <button type="button" onclick={openCreate} title="neues event">+</button>
     <button type="button" onclick={() => goto('/items/calendar')} title="open calendar">↗</button>
   {/snippet}
 
-  {#if buckets.today.length === 0 && buckets.tomorrow.length === 0}
-    <div class="muted empty">nichts geplant.</div>
+  <div class="week-strip">
+    {#each weekDays as d, i (d.getTime())}
+      {@const has = (eventsByDay.get(ymd(d))?.length ?? 0) > 0}
+      <button
+        type="button"
+        class="day"
+        class:today={isToday(d)}
+        class:selected={isSelected(d)}
+        onclick={() => (selected = startOfDay(d))}
+      >
+        <span class="dow">{WEEKDAY_LABELS[i]}</span>
+        <span class="num">{d.getDate()}</span>
+        <span class="dot" class:visible={has}></span>
+      </button>
+    {/each}
+  </div>
+
+  {#if selectedEvents.length === 0}
+    <div class="muted empty">
+      {isToday(selected) ? 'heute' : selected.toLocaleDateString(undefined, { weekday: 'long' })} —
+      nichts geplant.
+    </div>
   {:else}
-    {#if buckets.today.length > 0}
-      <div class="day-label">heute</div>
-      {#each buckets.today as ev (ev.id)}
-        <a class="event" class:live={isLive(ev)} href={`/items/${ev.id}`}>
-          <span class="when">{timeOf(ev)}</span>
-          <span class="what">{ev.title}</span>
-        </a>
-      {/each}
-    {/if}
-    {#if buckets.tomorrow.length > 0}
-      <div class="day-label" style="margin-top: 10px;">morgen</div>
-      {#each buckets.tomorrow as ev (ev.id)}
-        <a class="event" href={`/items/${ev.id}`}>
-          <span class="when">{timeOf(ev)}</span>
-          <span class="what">{ev.title}</span>
-        </a>
-      {/each}
-    {/if}
+    {#each selectedEvents as ev (ev.id)}
+      <a class="event" class:live={isLive(ev)} href={`/items/${ev.id}`}>
+        <span class="when">{timeOf(ev)}</span>
+        <span class="what">{ev.title}</span>
+      </a>
+    {/each}
   {/if}
 </Widget>
 
@@ -238,15 +281,44 @@
 {/if}
 
 <style>
-  .day-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-    padding-bottom: 4px;
+  /* The week strip extends edge-to-edge, undoing the widget body's
+     horizontal padding so the day cells align with the widget head. */
+  .week-strip {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    margin: -10px -12px 8px;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 4px;
   }
+  .day {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 6px 0 4px;
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--fg);
+    cursor: pointer;
+    font: inherit;
+  }
+  .day:last-child { border-right: none; }
+  .day:hover { background: rgba(127, 127, 127, 0.08); }
+  .day .dow { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .day .num { font-size: 16px; line-height: 1; margin-top: 1px; }
+  .day .dot {
+    width: 4px; height: 4px;
+    margin-top: 3px;
+    border-radius: 50%;
+    background: transparent;
+  }
+  .day .dot.visible { background: var(--accent); }
+  .day.today { background: rgba(127, 127, 127, 0.08); }
+  .day.today .num { color: var(--accent); font-weight: 600; }
+  .day.selected { background: rgba(127, 127, 127, 0.18); }
+  .day.selected .num { font-weight: 600; }
+  .day.today.selected { background: rgba(127, 127, 127, 0.22); }
+
   .event {
     display: flex;
     align-items: baseline;
