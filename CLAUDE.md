@@ -34,34 +34,51 @@ in production.
 │       ├── crypto.rs      mirrors web/src/lib/crypto.ts (RustCrypto)
 │       └── config.rs      ~/.config/rongnote/session.json
 ├── server/
-│   ├── Cargo.toml
+│   ├── Cargo.toml         includes `reqwest` (rustls-tls) for the transit proxy
 │   ├── migrations/        sqlx::migrate! — applied at startup, never rolled back
 │   └── src/
 │       ├── main.rs        wiring + AppState + /api/v1/config + CORS layer
+│       │                  + reqwest::Client + transit_cache in AppState
 │       ├── auth.rs        register/precheck/login/logout/recovery/me
 │       │                  (gated by config.registration_open)
 │       ├── passkey.rs     WebAuthn register + discoverable login + list/delete
-│       ├── items.rs       CRUD for notes/secrets/tasks/lists/files/snippets/bookmarks
-│       │                  + /:id/move + version snapshots on body update
+│       ├── items.rs       CRUD for notes/secrets/tasks/lists/files/snippets/
+│       │                  bookmarks/events + /:id/move + version snapshots on
+│       │                  body update + assert_can_modify helper (kiosk gate)
 │       ├── spaces.rs      team spaces + members + atomic invite re-wrap
 │       ├── shares.rs      /share/<token> public + /<token>/blob for files
 │       ├── files.rs       blob upload + download
 │       ├── audit.rs       record + list activity
 │       ├── export.rs      tar bundle of all user data
+│       ├── transit.rs     server-side VRR EFA proxy (browser can't reach EFA
+│       │                  directly — no CORS). /departures + /nearby with a
+│       │                  30 s per-stop in-memory cache.
 │       ├── session.rs     cookie + sessions table + AuthUser extractor
 │       ├── b64.rs         serde adapters: base64 + hex + date_iso (YYYY-MM-DD)
-│       ├── error.rs       AppError → IntoResponse
+│       ├── error.rs       AppError → IntoResponse (+ BadGateway = 502 for
+│       │                  upstream proxy failures)
 │       ├── config.rs      env var parsing (DATABASE_URL, REGISTRATION_OPEN, …)
 │       └── static_assets.rs   rust-embed of ../web/build
 ├── web/
-│   ├── package.json
-│   ├── vite.config.ts     dev proxy /api → :8080, libsodium fix plugin
+│   ├── package.json       includes sharp devDep for `npm run build:icons`
+│   ├── vite.config.ts     dev proxy /api → :8080, libsodium fix plugin,
+│   │                       experimentalMinChunkSize: 50_000 (see gotcha 22)
 │   ├── svelte.config.js   adapter-static, SPA fallback
-│   ├── static/favicon.svg light/dark via prefers-color-scheme inside SVG
+│   ├── scripts/build-icons.mjs   renders static/app-icon.svg → PNG PWA icons
+│   ├── static/
+│   │   ├── favicon.svg           light/dark via prefers-color-scheme inside SVG
+│   │   ├── app-icon.svg          source for the PWA icons
+│   │   ├── icons/{icon-192,icon-512,apple-touch-icon}.png   generated
+│   │   └── manifest.webmanifest  PWA manifest, start_url=/dashboard
 │   └── src/
-│       ├── app.html       inline FOUC-prevention script
+│       ├── app.html       inline FOUC-prevention script + PWA meta tags
+│       │                   (manifest link, apple-touch-icon, apple-mobile-*)
+│       │                   + inline window.__rongnote_lastError capture
 │       ├── app.css        6-color theme, --base-font-size,
 │       │                   .list-row { flex-shrink: 0 } so big lists scroll
+│       ├── hooks.client.ts       handleError → stash real error on
+│       │                          window.__rongnote_lastError before SvelteKit
+│       │                          normalises it to "Internal Error"
 │       └── lib/
 │           ├── api.ts             single fetch wrapper
 │           ├── crypto.ts          libsodium helpers + base32 + recovery code
@@ -84,7 +101,33 @@ in production.
 │           ├── TaskCheckbox.svelte themed checkbox (Square/SquareCheckBig)
 │           ├── Sidebar.svelte
 │           ├── CommandPalette.svelte
+│           ├── dashboardSettings.svelte.ts   per-device localStorage (selected
+│           │                                  list, lat/lon, stop IDs, walk
+│           │                                  minutes) for /dashboard widgets
+│           ├── dashboard/                    always-live dashboard widgets
+│           │   ├── Widget.svelte             shared chrome (title/meta/actions)
+│           │   ├── CalendarWidget.svelte     week-strip + agenda + +event modal
+│           │   ├── ListWidget.svelte         pinned-list dropdown + inline toggle
+│           │   ├── TasksWidget.svelte        open/done tasks + tap→TasksModal
+│           │   ├── TasksModal.svelte         bigger tasks view (rename/delete/add)
+│           │   ├── WeatherWidget.svelte      open-meteo current + 4-day forecast
+│           │   ├── ClockWidget.svelte        big HH:MM + date + ISO week
+│           │   ├── TransitWidget.svelte      2 stops via /api/v1/transit
+│           │   ├── TransitStopModal.svelte   single-stop bigger view
+│           │   └── SettingsModal.svelte      GPS + stop IDs + walk minutes
 │           └── dev-seed.ts        gated on import.meta.env.DEV
+├── web/src/routes/
+│   ├── +layout.svelte     top-level auth gate + spaces bootstrap; kiosk-only
+│   │                       users get bounced from /items* → /dashboard here.
+│   │                       NO +layout.ts (see gotcha 22).
+│   ├── +error.svelte      diagnostic error page — surfaces the real error
+│   │                       message + captured stack from window.__rongnote_lastError
+│   ├── dashboard/+page.svelte    standalone /dashboard route (top-level, no
+│   │                              items chrome). Nested-split 2x2 grid: cell
+│   │                              1 = calendar, cell 2 = list|tasks (2 cols),
+│   │                              cell 3 = weather/clock (2 rows), cell 4 =
+│   │                              transit. Pauses vault idle-lock on mount.
+│   └── items/             regular items chrome (sidebar + list pane)
 ├── extension/                 Firefox/Chrome MV3 popup, separate npm + esbuild build
 │   ├── package.json
 │   ├── build.mjs              bundles src/{popup,options,background}.ts → dist/
@@ -176,6 +219,12 @@ historical cases:
 - 0013 — `item_member_keys` table for sealed-box per-member wraps in team spaces
 - 0014 — events: `items.start_at`, `end_at`, `all_day` + partial index on
          `(space_id, start_at)` for cheap calendar-range queries
+- 0015 — kiosk role: extend `memberships.role` CHECK to include `'kiosk'`.
+         Kiosk is a between-viewer-and-editor role — full read; can CREATE
+         items; can UPDATE items they created OR of type `'list'`/`'task'`;
+         cannot delete or move. Intended for always-on wall displays
+         (`/dashboard`) where any household member should be able to tick
+         off a shared list / task without giving them destructive access.
 
 Going forward, never TRUNCATE in a migration. Add columns, backfill,
 deprecate. **Use `--` for SQL comments**, not Rust-style `///` — the latter
@@ -298,6 +347,54 @@ These have all bit me. Don't repeat:
     Firefox WebExtensions with `host_permissions` declared still send
     the cookie cross-origin if the server's `Access-Control-Allow-Origin`
     matches the extension's origin. See `cors_layer` in `server/src/main.rs`.
+22. **Do not add `src/routes/+layout.ts`** — SvelteKit's autogenerated
+    node file then contains `import * as universal from '../+layout.ts';
+    export { universal }`. Vite/Rollup chunking sometimes places that
+    binding on the wrong side of a module-eval cycle; V8 (desktop
+    Chrome/Firefox/Safari-on-mac) tolerates the cycle by chance, JSC
+    (iOS Safari) follows the spec strictly and TDZs on every reload
+    with `Cannot access 'universal' before initialization`. Manifests
+    as SvelteKit's default "500 / Internal Error" page on iOS only.
+    adapter-static + `fallback: 'index.html'` handles SPA behaviour
+    without an ssr=false option, so the file was pure liability.
+    `vite.config.ts` also sets `experimentalMinChunkSize: 50_000` as
+    defense-in-depth. If you need the same reload-diagnostic on a
+    similar bug: check `/+error.svelte` + `hooks.client.ts` — they
+    were built for exactly this and stayed after the fix.
+23. **First body-save on a team-space item needs `member_keys` on the
+    UPDATE, not just on the CREATE.** The `+` button in the sidebar
+    creates an empty item (no body → no wrap yet), then the editor's
+    first `saveNow` supplies both the encrypted body AND the per-member
+    sealed wraps. `items.rs::update` allows `member_keys` iff
+    `existing.encrypted_body_bytes().is_none()` and inserts them into
+    `item_member_keys` before commit. Subsequent saves reuse the
+    existing item_key + rows (that's what keeps version snapshots
+    decryptable), so `member_keys` is forbidden then.
+24. **Every editor / widget that saves a body must go through
+    `encryptBodyForSpace`, not a hand-rolled `wrapItemKey`.** The
+    dashboard `ListWidget` originally generated a fresh item_key on
+    every save and shipped `member_keys` — server rejected with
+    "team-space body update reuses existing member keys". The helper
+    branches on `spaceId` kind + presence of `item.wrapped_item_key`:
+    personal rotates, team-with-body reuses, team-first-body wraps.
+    Anything else drifts.
+25. **`spaces.refresh()` picks a default active space at first login,
+    and for kiosk-only users that default must be the team space.**
+    Every user gets a personal space at register time for crypto
+    plumbing (their keypair lives there), but for a kiosk it stays
+    empty forever. Defaulting activeId to personal would leave the
+    dashboard staring at an empty items.list. See
+    `spaces.svelte.ts::defaultActive` — team-space-first for kiosk,
+    personal for everyone else.
+26. **VRR EFA has no CORS.** Direct browser fetches to
+    `efa.vrr.de/standard/*` are blocked — we proxy through
+    `server/src/transit.rs`. `/api/v1/transit/departures?stop_id=…`
+    and `/nearby?lat=…&lon=…`. Auth-gated so we're not running a
+    free CORS proxy for VRR. 30s per-stop cache keeps EFA from being
+    hit more than every half-minute even when multiple kiosks poll.
+    Stop IDs are the VRR format (e.g. `20018235` for Düsseldorf Hbf),
+    NOT db-rest/HAFAS IBNRs — `dashboardSettings.load()` auto-drops
+    legacy `8\d{6,7}` IDs so the user re-runs "find nearest".
 
 ## Build + push image (CI)
 
@@ -387,6 +484,74 @@ The page's `$effect` tracks `items.list` so any mutation through
 another route (editor save, sidebar +, palette) repaints the calendar
 without a navigate-away-and-back. The server fetch itself doesn't
 touch items.list, so no loop.
+
+## Dashboard + kiosk
+
+`/dashboard` is a standalone top-level route (NOT under `/items`), so
+it renders without the sidebar / item-list chrome. Purpose: an
+always-on wall display (iPad on the kitchen wall).
+
+- Nested-split 2×2 grid: calendar · list+tasks (2 cols) · weather/clock
+  (2 rows) · transit. Widgets live under `web/src/lib/dashboard/`.
+- Vault idle-lock pauses on mount, resumes on destroy (via
+  `vault.pauseIdle()` / `resumeIdle()` — refcount-stacked so multiple
+  callers work).
+- Each panel is tap-to-open-modal: `TransitStopModal`, `TasksModal`,
+  and the existing list-edit modal. Bigger fonts, more entries.
+  Inline elements (checkboxes) stopPropagation to keep their toggle
+  behaviour.
+
+**Kiosk role**: `memberships.role = 'kiosk'` (migration 0015). Server
+gate is `assert_can_modify` in `items.rs`. Kiosk-only users:
+
+- `spaces.svelte.ts::isKioskOnly` — every team membership is `'kiosk'`.
+- Default active space becomes the first team (not the empty personal).
+- Post-login redirect goes to `/dashboard` (top-level layout).
+- Dashboard hides the "← items" and "🔒 lock" buttons for them.
+
+Kiosk users register normally (they need their own keypair for the
+sealed-box wraps). An owner then invites them into the team space
+with role='kiosk'. `REGISTRATION_OPEN=false` locks the door again.
+
+## PWA
+
+`/dashboard` installs as a chromeless PWA — the whole point on iPad
+Safari where "Add to Home Screen" launches without an address bar.
+
+- `web/static/manifest.webmanifest` — `start_url=/dashboard`,
+  `display=standalone`, icons at `/icons/{192,512,apple-touch-icon}.png`.
+- `web/static/app-icon.svg` is the source; `npm run build:icons` renders
+  the PNGs via `sharp` (devDep). Icons are committed — don't regenerate
+  on every build.
+- iOS-specific `apple-mobile-web-app-*` meta tags in `app.html`.
+  `apple-mobile-web-app-status-bar-style` is `default` (opaque bar
+  above the dashboard) not `black-translucent` (which would overlay
+  the header). No service worker — not needed for iOS home-screen
+  install, and adding one would just add offline complexity we don't
+  have a use case for.
+- `hooks.client.ts` + `+error.svelte` are diagnostic scaffolding for
+  the class of bug that hit us during the PWA rollout (see gotcha 22).
+  Keep them — surfacing the real underlying error is worth the ~30 LOC.
+
+## Transit (VRR)
+
+Server-side proxy at `/api/v1/transit/*` fetches Düsseldorf public
+transport from `efa.vrr.de` (canonical source for VRR / Rheinbahn /
+Stadtwerke; db-rest is unreliable and doesn't cover local transit
+consistently).
+
+- `departures?stop_id=<vrr_id>&limit=N` — up to 30 departures per stop.
+- `nearby?lat=<f>&lon=<f>&limit=N` — up to 20 nearby stops by radius.
+- Auth-gated (session cookie). 30 s in-memory cache per unique query.
+- Response shape is the same as the SPA was already consuming from
+  db-rest, so switching client-side was a one-liner: `api.transitDepartures`.
+
+Stop IDs are VRR format (8 digits starting with a region prefix,
+e.g. `20018235` for Düsseldorf Hbf, `20018224` for Engerstraße).
+
+Walk-time (per stop, in `dashboardSettings.walk_minutes`) hides
+departures the rider can't catch — the widget's minutes column
+becomes "leave-by countdown" when a walk-time is set.
 
 ## CSV import
 
