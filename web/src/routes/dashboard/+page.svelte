@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { Search } from '@lucide/svelte';
+  import CommandPalette from '$lib/CommandPalette.svelte';
   import CalendarWidget from '$lib/dashboard/CalendarWidget.svelte';
   import ClockWidget from '$lib/dashboard/ClockWidget.svelte';
   import ListWidget from '$lib/dashboard/ListWidget.svelte';
@@ -48,6 +50,10 @@
     goto('/login', { replaceState: true });
   }
 
+  function openPalette() {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));
+  }
+
   async function refreshAll() {
     await items.refresh();
   }
@@ -66,15 +72,24 @@
       <button type="button" onclick={() => goto('/items')}>← items</button>
     {/if}
     <span class="title">dashboard</span>
-    <span class="muted small">{dateLabel} · {nowLabel}</span>
+    <span class="muted small wide-only">{dateLabel} · {nowLabel}</span>
     <span class="grow"></span>
-    <span class="live-badge" title="auto-lock pausiert solang du auf dem dashboard bist">
+    <span class="live-badge wide-only" title="auto-lock pausiert solang du auf dem dashboard bist">
       ● always-live
     </span>
-    <button type="button" onclick={refreshAll} title="reload data">↻ refresh</button>
+    {#if !kioskOnly}
+      <button type="button" onclick={openPalette} title="search / commands" aria-label="search">
+        <Search size={14} />
+      </button>
+    {/if}
+    <button type="button" onclick={refreshAll} title="reload data" aria-label="refresh">
+      ↻<span class="wide-only">&nbsp;refresh</span>
+    </button>
     <button type="button" onclick={() => (settingsOpen = true)} title="settings">⚙</button>
     {#if !kioskOnly}
-      <button type="button" onclick={lockNow} title="vault sperren">🔒 lock</button>
+      <button type="button" onclick={lockNow} title="vault sperren" aria-label="lock">
+        🔒<span class="wide-only">&nbsp;lock</span>
+      </button>
     {/if}
   </header>
 
@@ -107,11 +122,16 @@
   <SettingsModal onClose={() => (settingsOpen = false)} />
 {/if}
 
+{#if !kioskOnly}
+  <CommandPalette />
+{/if}
+
 <style>
   .page {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
   }
   .bar {
@@ -221,6 +241,32 @@
     .cell.split-cols > :global(section:last-child),
     .cell.split-rows > :global(section:last-child) {
       border-bottom: none;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .page {
+      overflow-y: auto;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .bar {
+      height: 48px;
+      gap: 6px;
+      padding: 0 max(8px, env(safe-area-inset-left));
+    }
+    .bar button {
+      min-width: 40px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .wide-only {
+      display: none;
+    }
+    .grid {
+      flex: none;
     }
   }
 </style>

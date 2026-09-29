@@ -10,6 +10,7 @@
   --font-mono: ui-monospace, "JetBrains Mono", "IBM Plex Mono",
     "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --row-height: 28px;
+  --statusbar-height: 22px;
   --gap: 8px;
 }
 
@@ -121,7 +122,7 @@ hr {
 }
 
 .statusbar {
-  height: 22px;
+  height: var(--statusbar-height);
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -129,6 +130,30 @@ hr {
   gap: 16px;
   font-size: 12px;
   color: var(--muted);
+  padding-left: max(8px, env(safe-area-inset-left));
+  padding-right: max(8px, env(safe-area-inset-right));
+}
+
+/* Touch devices (iPhone / iPad): 44px tap targets per Apple HIG, and
+   form controls at >=16px — iOS Safari zooms the whole page into any
+   focused input smaller than that and never zooms back out. */
+@media (pointer: coarse) {
+  input, textarea, select {
+    font-size: max(16px, 1em);
+  }
+}
+@media (pointer: coarse) and (max-width: 700px) {
+  :root {
+    --row-height: 44px;
+    --statusbar-height: calc(36px + env(safe-area-inset-bottom));
+  }
+  button {
+    min-height: 36px;
+  }
+  .statusbar {
+    padding-bottom: env(safe-area-inset-bottom);
+    font-size: 13px;
+  }
 }
 
 .center-form {

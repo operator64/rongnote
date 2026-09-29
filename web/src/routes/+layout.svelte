@@ -23,6 +23,15 @@
     return path.startsWith('/share/');
   }
 
+  // Home-screen installs made while the manifest still had
+  // start_url=/dashboard keep launching there — iOS snapshots the start URL
+  // at install time. Only kiosk users belong on the dashboard at launch.
+  const launchedStandaloneOnDashboard =
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/dashboard' &&
+    (window.matchMedia('(display-mode: standalone)').matches ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true);
+
   onMount(async () => {
     await Promise.all([ensureReady(), session.refresh()]);
     if (session.user) {
@@ -31,6 +40,9 @@
       // a kiosk-only user reloading the page lands on /dashboard with
       // no /items flicker.
       await Promise.all([vault.tryRestore(), spaces.refresh()]);
+      if (launchedStandaloneOnDashboard && !spaces.isKioskOnly) {
+        await goto('/items', { replaceState: true });
+      }
     }
     enforceAuth();
   });

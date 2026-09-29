@@ -389,7 +389,7 @@
 
     <label class="field">
       <span class="lbl">password</span>
-      <div class="row">
+      <div class="row pw-row">
         {#if revealed}
           <input
             type="text"
@@ -629,5 +629,28 @@
   }
   .dimmed {
     opacity: 0.7;
+  }
+  @media (max-width: 700px) {
+    .form {
+      padding: 12px;
+    }
+    .pw-row {
+      flex-wrap: wrap;
+    }
+    .field .pw-row input {
+      flex: 1 1 100%;
+    }
+    .pw-row button {
+      flex: 1;
+    }
+    .totp-code {
+      font-size: 24px;
+      padding: 4px 10px;
+    }
+    .link,
+    .lbl,
+    .small {
+      font-size: 12px;
+    }
   }
 </style>

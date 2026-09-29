@@ -251,7 +251,7 @@
         aria-label="open menu"
         onclick={() => (drawerOpen = !drawerOpen)}
       >
-        <Menu size={16} />
+        <Menu size={20} />
       </button>
       {#if inTrash}
         <span class="grow muted">trash</span>
@@ -273,10 +273,10 @@
         aria-label="search"
         onclick={openPalette}
       >
-        <Search size={16} />
+        <Search size={20} />
       </button>
       {#if !inTrash}
-        <button onclick={newItem} title="new {items.filter.type ?? 'note'}">+</button>
+        <button class="new-btn" onclick={newItem} title="new {items.filter.type ?? 'note'}">+</button>
       {/if}
     </div>
     {#if items.loading && items.list.length === 0}
@@ -329,6 +329,23 @@
     {#if !onListView}
       <div class="mobile-back mobile-only">
         <button type="button" onclick={() => goto('/items')}>← items</button>
+        <span class="grow"></span>
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label="search"
+          onclick={openPalette}
+        >
+          <Search size={20} />
+        </button>
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label="open menu"
+          onclick={() => (drawerOpen = !drawerOpen)}
+        >
+          <Menu size={20} />
+        </button>
       </div>
     {/if}
     {@render children()}
@@ -371,7 +388,10 @@
   .shell {
     display: grid;
     grid-template-columns: 200px 280px 1fr;
-    height: calc(100vh - 22px);
+    height: calc(100vh - var(--statusbar-height));
+    /* dvh tracks iOS Safari's collapsing toolbar; 100vh alone puts the
+       statusbar underneath it. */
+    height: calc(100dvh - var(--statusbar-height));
     border-bottom: 1px solid var(--border);
   }
   .list-pane {
@@ -596,7 +616,59 @@
       z-index: 50;
       pointer-events: none;
       display: grid;
-      grid-template-columns: 220px 1fr;
+      grid-template-columns: min(280px, 80vw) 1fr;
+    }
+    .sidebar-wrap :global(.sidebar) {
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+    }
+    .pane-head {
+      height: 48px;
+      padding: 0 4px 0 max(4px, env(safe-area-inset-left));
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .icon-btn {
+      width: 44px;
+      height: 44px;
+      justify-content: center;
+    }
+    .new-btn {
+      width: 40px;
+      height: 36px;
+      font-size: 18px;
+      padding: 0;
+    }
+    .filter-chip {
+      height: 32px;
+      padding: 0 10px;
+      font-size: 13px;
+    }
+    .list-row,
+    .task-row {
+      padding: 0 12px;
+    }
+    .due {
+      font-size: 12px;
+    }
+    .mobile-back {
+      height: 48px;
+      padding: 0 4px 0 12px;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .mobile-back .icon-btn {
+      color: var(--fg);
+    }
+    /* Every editor/page ships a 32px .head; buttons in it are 36px on
+       touch, so grow the bars here rather than in each component. */
+    .detail-pane :global(.head) {
+      height: 48px;
+      flex-shrink: 0;
+    }
+    .detail-pane :global(.meta-row) {
+      height: 36px;
+      flex-shrink: 0;
     }
     .sidebar-wrap :global(.sidebar) {
       transform: translateX(-100%);

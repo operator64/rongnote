@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { flushSync, onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api } from '$lib/api';
@@ -633,11 +633,14 @@
     }
   }
 
-  async function openPalette() {
-    open = true;
-    query = '';
-    cursor = 0;
-    await tick();
+  function openPalette() {
+    // flushSync + focus in the same call stack as the tap: iOS only
+    // raises the keyboard for focus() inside the user gesture.
+    flushSync(() => {
+      open = true;
+      query = '';
+      cursor = 0;
+    });
     inputEl?.focus();
   }
 
@@ -694,14 +697,19 @@
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.stopPropagation()}
     >
-      <input
-        bind:this={inputEl}
-        bind:value={query}
-        onkeydown={onInputKey}
-        placeholder="search items or run command…"
-        autocomplete="off"
-        spellcheck="false"
-      />
+      <div class="input-row">
+        <input
+          bind:this={inputEl}
+          bind:value={query}
+          onkeydown={onInputKey}
+          placeholder="search items or run command…"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          enterkeyhint="go"
+        />
+        <button type="button" class="close" aria-label="close" onclick={closePalette}>×</button>
+      </div>
       <div class="results" bind:this={resultsEl}>
         {#each visibleItems as item, i (item.kind + ':' + (item.kind === 'item' ? item.id : item.label))}
           <button
@@ -746,11 +754,24 @@
     flex-direction: column;
     max-height: 70vh;
   }
+  .input-row {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
   .palette input {
     border: none;
-    border-bottom: 1px solid var(--border);
     padding: 10px 12px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
+  }
+  .close {
+    display: none;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 22px;
+    width: 48px;
+    padding: 0;
   }
   .palette input:focus {
     outline: none;
@@ -799,5 +820,32 @@
   }
   .muted {
     color: var(--muted);
+  }
+  /* Phone: pin the palette to the top so the on-screen keyboard never
+     covers the input or the first results. */
+  @media (max-width: 700px) {
+    .overlay {
+      padding-top: 0;
+    }
+    .palette {
+      width: 100%;
+      max-height: 60dvh;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+    }
+    .palette input {
+      padding: 12px 16px;
+    }
+    .close {
+      display: block;
+    }
+    .result {
+      min-height: 44px;
+      padding: 8px 16px;
+    }
+    .footer {
+      display: none;
+    }
   }
 </style>

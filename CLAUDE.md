@@ -69,7 +69,7 @@ in production.
 │   │   ├── favicon.svg           light/dark via prefers-color-scheme inside SVG
 │   │   ├── app-icon.svg          source for the PWA icons
 │   │   ├── icons/{icon-192,icon-512,apple-touch-icon}.png   generated
-│   │   └── manifest.webmanifest  PWA manifest, start_url=/dashboard
+│   │   └── manifest.webmanifest  PWA manifest, start_url=/ (layout routes by role)
 │   └── src/
 │       ├── app.html       inline FOUC-prevention script + PWA meta tags
 │       │                   (manifest link, apple-touch-icon, apple-mobile-*)
@@ -395,6 +395,15 @@ These have all bit me. Don't repeat:
     Stop IDs are the VRR format (e.g. `20018235` for Düsseldorf Hbf),
     NOT db-rest/HAFAS IBNRs — `dashboardSettings.load()` auto-drops
     legacy `8\d{6,7}` IDs so the user re-runs "find nearest".
+27. **iOS Safari zooms into any focused input under 16px** and never
+    zooms back out. `app.css` forces `font-size: max(16px, 1em)` on
+    inputs under `(pointer: coarse)`. Phone-only touch sizing (44px rows,
+    36px buttons, safe-area statusbar) lives under
+    `(pointer: coarse) and (max-width: 700px)` so the kiosk iPad
+    dashboard stays compact.
+28. **iOS only raises the keyboard for `focus()` inside the tap
+    handler's call stack.** `await tick()` before focusing breaks it.
+    `CommandPalette.openPalette` uses `flushSync` + synchronous focus.
 
 ## Build + push image (CI)
 
@@ -515,10 +524,14 @@ with role='kiosk'. `REGISTRATION_OPEN=false` locks the door again.
 
 ## PWA
 
-`/dashboard` installs as a chromeless PWA — the whole point on iPad
-Safari where "Add to Home Screen" launches without an address bar.
+The app installs as a chromeless PWA — iPad Safari (kiosk) and iPhone
+"Add to Home Screen" both launch without an address bar.
 
-- `web/static/manifest.webmanifest` — `start_url=/dashboard`,
+- `web/static/manifest.webmanifest` — `start_url=/`, so the root layout
+  routes kiosk-only users to `/dashboard` and everyone else to `/items`.
+  iOS snapshots the start URL at install time, so older installs still
+  launch at `/dashboard`; the root layout detects a standalone launch
+  there and bounces non-kiosk users to `/items`.
   `display=standalone`, icons at `/icons/{192,512,apple-touch-icon}.png`.
 - `web/static/app-icon.svg` is the source; `npm run build:icons` renders
   the PNGs via `sharp` (devDep). Icons are committed — don't regenerate

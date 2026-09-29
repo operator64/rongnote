@@ -1,8 +1,8 @@
 {
-  "name": "rongnote dashboard",
+  "name": "rongnote",
   "short_name": "rongnote",
-  "description": "always-live wall display for the rongnote vault",
-  "start_url": "/dashboard",
+  "description": "end-to-end encrypted notes, secrets and tasks",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",

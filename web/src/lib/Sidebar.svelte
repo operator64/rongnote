@@ -218,4 +218,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  @media (pointer: coarse) and (max-width: 700px) {
+    .row-btn {
+      height: 44px;
+      min-height: 44px;
+      padding: 0 16px;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .section-head {
+      padding: 12px 16px 4px;
+    }
+    .count {
+      font-size: 13px;
+    }
+  }
 </style>

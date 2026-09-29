@@ -6,8 +6,9 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 
-    <!-- PWA: tablets pinned to /dashboard install via "Add to Home Screen"
-         and launch fullscreen (no address bar). The manifest covers
+    <!-- PWA: "Add to Home Screen" launches fullscreen (no address bar) at
+         start_url=/ — the root layout routes kiosk users to /dashboard,
+         everyone else to /items. The manifest covers
          Chrome/Edge install + Android home-screen icons; the apple-*
          meta + apple-touch-icon cover iOS Safari, which ignores the
          manifest's display:standalone and uses these instead. -->
